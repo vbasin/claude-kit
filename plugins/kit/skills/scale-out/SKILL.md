@@ -7,6 +7,8 @@ description: Choose how to split large work across agents (subagents, /batch, dy
 
 Parallelism helps only when the pieces are independent. One chain of dependent steps runs better and cheaper in a single session.
 
+This is the detail behind one step of `/kit:deliver`, which frames the task, routes it, verifies and reviews. Use `deliver` for the whole job; use this when you only need the choice of tool.
+
 ## Pick the tool
 
 | Situation | Use |

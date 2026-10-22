@@ -1,6 +1,6 @@
 ---
 name: security-reviewer
-description: Security review of the current change: injection, secrets, unsafe deserialization, destructive operations and credential handling. Use before merging changes that touch SQL, subprocesses, auth, external APIs, file paths or config.
+description: "Security review of the current change: injection, secrets, unsafe deserialization, destructive operations and credential handling. Use before merging changes that touch SQL, subprocesses, auth, external APIs, file paths or config."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Edit, Write, NotebookEdit
 model: sonnet

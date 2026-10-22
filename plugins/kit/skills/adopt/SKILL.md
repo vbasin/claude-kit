@@ -19,6 +19,7 @@ Set up this repository to use the kit. Templates are in `${CLAUDE_PLUGIN_ROOT}/t
 4. **Verification:** start from `${CLAUDE_PLUGIN_ROOT}/templates/.claude/kit.json`:
    - set the interpreter list, the lint arguments CI actually gates on, test directories, any env file the tests need, and the guards
    - turn on `guards.pytest_full_suite` if the repo says not to run the full suite
+   - fill the `routing` block, which is what makes one prompt enough: `gates` maps path globs to the command that gates them (the repo's scoped test targets, not the full suite), `reviewers` maps path globs to the agent that must see such a diff (e.g. `quant:causality-reviewer` for feature and label code), and `note` is one sentence of standing context for every session. `/kit:deliver` reads them
 5. **Skills shared with other agents:** if skills live in `.github/skills/` (Copilot) or elsewhere, symlink each into `.claude/skills/<name>`, e.g. `ln -s ../../.github/skills/<name> .claude/skills/<name>`. Claude Code follows skill symlinks, so there's one source and no copies.
 6. **Check:** run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/stop_verify.py" --manual <one source file>` and confirm it picks sensible tests.
 7. Summarize what was added, and tell the user to commit `.claude/` and `CLAUDE.md`.
