@@ -45,7 +45,7 @@ def main() -> int:
     lint = config.get("lint", {})
     if not lint.get("enabled") or not rel.endswith(".py"):
         return 0
-    python = resolve_python(config)
+    python = resolve_python(config, root)
     if python is None:
         return 0
     try:

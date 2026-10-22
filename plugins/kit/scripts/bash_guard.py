@@ -1,7 +1,7 @@
 """PreToolUse (Bash): ask before commands that the repo's rules say need a human.
 
 Guards (set each to "ask", "deny" or "off" under `guards` in `.claude/kit.json`):
-  sql_destructive    DROP / TRUNCATE / unqualified DELETE / hypertable chunk drops or
+  sql_destructive    DROP / TRUNCATE / DELETE without WHERE / hypertable chunk drops or
                      (de)compression inside any command, e.g. `psql -c "..."`.
   pytest_full_suite  a pytest run with no explicit test path, or only the top-level
                      test directory, i.e. the whole suite.
@@ -20,10 +20,80 @@ from kit_common import emit, load_config, read_input, repo_root
 SQL_DESTRUCTIVE = re.compile(
     r"\bDROP\s+(TABLE|SCHEMA|DATABASE|MATERIALIZED\s+VIEW|VIEW|INDEX)\b"
     r"|\bTRUNCATE\b"
-    r"|\bDELETE\s+FROM\s+[\w.\"]+\s*(;|\"|'|$)"
     r"|\b(drop_chunks|decompress_chunk|compress_chunk)\s*\(",
     re.IGNORECASE,
 )
+DELETE_FROM = re.compile(r"\bDELETE\s+FROM\b", re.IGNORECASE)
+WHERE = re.compile(r"\bWHERE\b", re.IGNORECASE)
+QUOTES = "'\""
+
+
+def _open_quotes(text: str, end: int) -> List[str]:
+    """Quotes still open at `end`, innermost last. A different quote char nests, the same one closes."""
+    stack: List[str] = []
+    i = 0
+    while i < end:
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch in QUOTES:
+            if stack and stack[-1] == ch:
+                stack.pop()
+            else:
+                stack.append(ch)
+        i += 1
+    return stack
+
+
+def _delete_without_where(text: str) -> bool:
+    """True if some DELETE FROM statement in `text` ends before any WHERE.
+
+    The statement ends at `;`, at the quote that encloses it (the `-c "..."` string or a
+    host-language string), or at a shell separator. Quoted identifiers and string literals
+    inside it are skipped, so `DELETE FROM "ticks" WHERE ...` counts as filtered.
+    """
+    for m in DELETE_FROM.finditer(text):
+        enclosing = _open_quotes(text, m.start())
+        host = enclosing[-1] if enclosing else None
+        inner: Optional[str] = None
+        visible: List[str] = []
+        i = m.end()
+        while i < len(text):
+            ch = text[i]
+            if ch == "\\":
+                i += 2
+                continue
+            if inner:
+                if ch == inner:
+                    inner = None
+            elif ch == host or ch == ";" or (host is None and ch in "&|"):
+                break
+            elif ch in QUOTES:
+                inner = ch
+            else:
+                visible.append(ch)
+            i += 1
+        if not WHERE.search("".join(visible)):
+            return True
+    return False
+
+
+def sql_destructive(command: str) -> bool:
+    if SQL_DESTRUCTIVE.search(command):
+        return True
+    if not DELETE_FROM.search(command):
+        return False
+    # Check each shell word that holds a whole statement (e.g. the `-c` argument) with its
+    # shell quoting removed; fall back to the raw text for heredocs and unquoted SQL.
+    try:
+        words = [w for w in shlex.split(command) if DELETE_FROM.search(w)]
+    except ValueError:
+        words = []
+    found = sum(len(DELETE_FROM.findall(w)) for w in words)
+    if any(_delete_without_where(w) for w in words):
+        return True
+    return found < len(DELETE_FROM.findall(command)) and _delete_without_where(command)
 
 # pytest options that consume the following token as their value.
 PYTEST_VALUE_OPTS = {
@@ -32,22 +102,34 @@ PYTEST_VALUE_OPTS = {
     "--durations", "--junitxml", "--log-level", "--color", "--import-mode",
     "--override-ini", "--cov", "--cov-report", "--timeout", "--dist",
 }
-SEPARATORS = {"&&", "||", ";", "|", "|&", "&"}
+SEPARATOR_CHARS = set(";&|\n")
+REDIRECT_CHARS = set("<>&")
 
 
 def _segments(command: str) -> List[List[str]]:
+    """Simple commands in `command`, split on ; && || | & and unquoted newlines, minus redirections."""
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+        # A backslash-newline continues the line; an unquoted newline ends the command.
+        lexer = shlex.shlex(command.replace("\\\n", " "), posix=True, punctuation_chars=";&|<>\n")
+        lexer.whitespace = " \t\r"
         lexer.whitespace_split = True
         tokens = list(lexer)
     except ValueError:
         return []
     segs: List[List[str]] = [[]]
-    for tok in tokens:
-        if tok in SEPARATORS:
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
+        if tok and set(tok) <= SEPARATOR_CHARS:
             segs.append([])
+        elif tok and set(tok) <= REDIRECT_CHARS and set(tok) & {"<", ">"}:
+            i += 1  # redirection operator: also skip its target
+        elif tok.isdigit() and nxt and set(nxt) <= REDIRECT_CHARS and set(nxt) & {"<", ">"}:
+            pass  # file-descriptor number of a redirection such as 2>&1
         else:
             segs[-1].append(tok)
+        i += 1
     return [s for s in segs if s]
 
 
@@ -99,7 +181,7 @@ def is_full_suite(command: str, test_dirs: List[str]) -> bool:
                 skip = tok in PYTEST_VALUE_OPTS
                 continue
             paths.append(tok)
-        if not paths or all(p.strip("./").rstrip("/") in top for p in paths):
+        if not paths or any(p.strip("./").rstrip("/") in top for p in paths):
             return True
     return False
 
@@ -107,7 +189,7 @@ def is_full_suite(command: str, test_dirs: List[str]) -> bool:
 def check(command: str, config: Dict[str, Any]) -> Optional[Tuple[str, str]]:
     guards = config.get("guards", {})
     mode = guards.get("sql_destructive", "ask")
-    if mode != "off" and SQL_DESTRUCTIVE.search(command):
+    if mode != "off" and sql_destructive(command):
         return mode, (
             "Destructive database statement (DROP/TRUNCATE/DELETE without WHERE/chunk operation) "
             "needs explicit approval."

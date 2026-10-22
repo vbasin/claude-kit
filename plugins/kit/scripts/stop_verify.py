@@ -2,10 +2,12 @@
 
 Runs only when the repo opts in through `.claude/kit.json` (`lint.enabled`, `tests.enabled`).
 Scope is the session's own changes: files edited through Claude's tools plus anything
-that changed on disk or in commits since SessionStart. Tests are picked per changed
-file (its own test file, `test_<module>*.py`, and test files that import it), capped at
-`tests.max_files`, minus any `tests.exclude` globs (e.g. tests that need another
-virtualenv), and always passed to pytest as explicit paths, never as a whole suite.
+that changed on disk or in commits since SessionStart, deletions included. Tests are
+picked per changed file (its own test file, `test_<module>*.py`, test files that import
+it, and for a `conftest.py` the test files beneath it), capped at `tests.max_files`,
+minus any `tests.exclude` globs (e.g. tests that need another virtualenv), and always
+passed to pytest as explicit paths, never as a whole suite. Each pytest run gets an
+empty bytecode cache, so a stale `.pyc` can't stand in for the edited source.
 
 Loop safety: a failure blocks the stop once. If Claude tries to stop again with the
 same failure, the stop is allowed and the user sees a notice instead, so a
@@ -17,13 +19,16 @@ checks the given files, or every dirty file when none are given, and prints a re
 
 from __future__ import annotations
 
+import ast
 import fnmatch
 import hashlib
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from kit_common import (
     changed_since,
@@ -33,6 +38,7 @@ from kit_common import (
     load_config,
     load_state,
     read_input,
+    relative_to_root,
     repo_root,
     resolve_python,
     run,
@@ -50,8 +56,48 @@ def _is_test_file(rel: str, test_dirs: List[str]) -> bool:
     return in_dir and name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
 
 
+DOTTED = re.compile(r"[A-Za-z_]\w*(?:\.\w+)+")
+IMPORT_FALLBACK = re.compile(r"^\s*(?:from\s+([\w.]+)\s+import\s+\(?([\w\s,]+)|import\s+([\w.]+))", re.M)
+
+
+def imported_names(source: str) -> Set[str]:
+    """Dotted names a test refers to: imported modules, `module.name` for each from-import,
+    and dotted strings under an imported package, such as `mock.patch("pkg.mod.func")`."""
+    names: Set[str] = set()
+    strings: Set[str] = set()
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        for mod, members, plain in IMPORT_FALLBACK.findall(source):
+            if plain:
+                names.add(plain)
+            else:
+                names.add(mod)
+                names.update(f"{mod}.{m.strip()}" for m in members.split(",") if m.strip())
+        return names
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names.add(node.module)
+            names.update(f"{node.module}.{alias.name}" for alias in node.names)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and DOTTED.fullmatch(node.value):
+            strings.add(node.value)
+    packages = {n.split(".", 1)[0] for n in names}
+    names.update(s for s in strings if s.split(".", 1)[0] in packages)
+    return names
+
+
+def _refers_to(names: Set[str], module: str) -> bool:
+    prefix = module + "."
+    return any(n == module or n.startswith(prefix) for n in names)
+
+
 def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> Tuple[List[str], int]:
-    """Explicit test paths for the changed files, and how many more were found but capped."""
+    """Explicit test paths for the changed files, and how many more were found but capped.
+
+    Changed files may have been deleted: their tests are exactly the ones that should fail.
+    """
     test_dirs = [d.strip("/") for d in tests_cfg.get("test_dirs", ["tests"])]
     strip_roots = set(tests_cfg.get("import_roots", ["src"]))
     all_tests: List[str] = []
@@ -63,21 +109,26 @@ def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> 
                 for p in sorted(base.rglob("*.py"))
                 if p.name.startswith("test_") or p.name.endswith("_test.py")
             )
-    texts: Dict[str, str] = {}
+    parsed: Dict[str, Set[str]] = {}
 
-    def text(rel: str) -> str:
-        if rel not in texts:
+    def refs(rel: str) -> Set[str]:
+        if rel not in parsed:
             try:
-                texts[rel] = (root / rel).read_text(encoding="utf-8", errors="ignore")
+                parsed[rel] = imported_names((root / rel).read_text(encoding="utf-8", errors="ignore"))
             except OSError:
-                texts[rel] = ""
-        return texts[rel]
+                parsed[rel] = set()
+        return parsed[rel]
 
     direct = [rel for rel in changed_py if _is_test_file(rel, test_dirs)]
     by_name: List[str] = []
     by_import: List[str] = []
+    by_conftest: List[str] = []
     for rel in changed_py:
-        if rel in direct or Path(rel).name == "conftest.py":
+        if rel in direct:
+            continue
+        if Path(rel).name == "conftest.py":
+            scope = Path(rel).parent.as_posix()
+            by_conftest.extend(t for t in all_tests if scope == "." or t.startswith(scope + "/"))
             continue
         parts = list(Path(rel).with_suffix("").parts)
         if parts and parts[-1] == "__init__":
@@ -88,22 +139,16 @@ def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> 
         dotted = [".".join(parts)]
         if parts[0] in strip_roots and len(parts) > 1:
             dotted.append(".".join(parts[1:]))
-        patterns = []
-        for d in dotted:
-            patterns.append(re.compile(rf"(?:from|import)\s+{re.escape(d)}\b"))
-            if "." in d:
-                parent = d.rsplit(".", 1)[0]
-                patterns.append(re.compile(rf"from\s+{re.escape(parent)}\s+import\s+[^\n]*\b{re.escape(stem)}\b"))
         for t in all_tests:
             tname = Path(t).stem
             if tname == f"test_{stem}" or tname.startswith(f"test_{stem}_"):
                 by_name.append(t)
-            elif any(p.search(text(t)) for p in patterns):
+            elif any(_refers_to(refs(t), d) for d in dotted):
                 by_import.append(t)
 
     excluded = tests_cfg.get("exclude", []) or []
     selected: List[str] = []
-    for rel in direct + by_name + by_import:
+    for rel in direct + by_name + by_import + by_conftest:
         if rel in selected or not (root / rel).is_file():
             continue
         if any(fnmatch.fnmatch(rel, pat) for pat in excluded):
@@ -128,8 +173,10 @@ def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str]) ->
     if not tcfg.get("enabled") or not tests:
         return None
     cmd = [python, "-m", "pytest", *tcfg.get("pytest_args", []), *tests]
-    # No bytecode: an edit within the same second as the last run can otherwise reuse a stale .pyc.
-    env = {"PYTHONDONTWRITEBYTECODE": "1", **(tcfg.get("env") or {})}
+    # An empty bytecode cache per run: a same-size edit within the mtime resolution of an
+    # existing __pycache__ entry would otherwise run the old code and pass.
+    cache = tempfile.mkdtemp(prefix="kit-pycache-")
+    env = {"PYTHONPYCACHEPREFIX": cache, "PYTHONDONTWRITEBYTECODE": "1", **(tcfg.get("env") or {})}
     try:
         proc = run(
             cmd, root, timeout=int(tcfg.get("timeout_s", 300)),
@@ -139,22 +186,30 @@ def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str]) ->
         return f"pytest timed out after {tcfg.get('timeout_s', 300)}s on: {' '.join(tests)}"
     except OSError as exc:
         return f"pytest could not run: {exc}"
-    if proc.returncode in (0, PYTEST_NO_TESTS) or "No module named pytest" in proc.stderr:
+    finally:
+        shutil.rmtree(cache, ignore_errors=True)
+    if proc.returncode in (0, PYTEST_NO_TESTS):
         return None
+    if "No module named pytest" in proc.stderr:
+        return (f"pytest is not installed for {python}, so no tests ran. Install it there, point "
+                "`python` in .claude/kit.json at an interpreter that has it, or set tests.enabled to false.")
     return tail(proc.stdout + proc.stderr, max_lines=60)
 
 
 def verify(root: Path, cfg: Dict[str, Any], changed: List[str]) -> Tuple[List[str], List[str], int]:
     """Return (failure sections, tests run, tests capped)."""
-    python = resolve_python(cfg)
-    changed_py = [f for f in changed if f.endswith(".py") and (root / f).is_file()]
+    python = resolve_python(cfg, root)
+    changed_py = [f for f in changed if f.endswith(".py")]
     if python is None or not changed_py:
         return [], [], 0
     failures: List[str] = []
-    lint_out = lint_files(root, python, cfg, changed_py)
+    lint_out = lint_files(root, python, cfg, [f for f in changed_py if (root / f).is_file()])
     if lint_out:
         failures.append(f"Lint ({' '.join(cfg['lint'].get('args', []))}):\n{lint_out}")
-    tests, capped = find_tests(root, changed_py, cfg.get("tests", {}))
+    tests: List[str] = []
+    capped = 0
+    if cfg.get("tests", {}).get("enabled"):
+        tests, capped = find_tests(root, changed_py, cfg.get("tests", {}))
     test_out = run_tests(root, python, cfg, tests)
     if test_out:
         failures.append(f"Tests (pytest {' '.join(tests)}):\n{test_out}")
@@ -220,7 +275,7 @@ def manual_main(files: List[str]) -> int:
         print("kit verify: not inside a git repository")
         return 2
     cfg = load_config(root)
-    changed = files or dirty_files(root)
+    changed = [relative_to_root(root, f) or f for f in files] or dirty_files(root, include_deleted=True)
     failures, tests, capped = verify(root, cfg, changed)
     py = [f for f in changed if f.endswith(".py")]
     print(f"kit verify: {len(py)} changed Python file(s); tests run: {' '.join(tests) or 'none'}")

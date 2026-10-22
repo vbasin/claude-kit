@@ -89,13 +89,20 @@ def load_config(root: Optional[Path]) -> Dict[str, Any]:
     return _merge(DEFAULT_CONFIG, user if isinstance(user, dict) else {})
 
 
-def resolve_python(config: Dict[str, Any]) -> Optional[str]:
+def resolve_python(config: Dict[str, Any], root: Path) -> Optional[str]:
+    """First usable interpreter: paths are relative to the repo root, bare names come from PATH.
+
+    The path is made absolute but symlinks are kept, so a venv's python still finds its venv.
+    """
     candidates = config.get("python") or ["python3"]
     if isinstance(candidates, str):
         candidates = [candidates]
     for cand in candidates:
-        if os.path.isabs(cand) and os.access(cand, os.X_OK):
-            return cand
+        if "/" in cand:
+            path = Path(cand) if os.path.isabs(cand) else root / cand
+            if path.is_file() and os.access(str(path), os.X_OK):
+                return str(path.absolute())
+            continue
         found = shutil.which(cand)
         if found:
             return found
@@ -156,8 +163,8 @@ def file_digest(path: Path) -> Optional[str]:
         return None
 
 
-def dirty_files(root: Path) -> List[str]:
-    """Modified, added and untracked files relative to the repo root."""
+def dirty_files(root: Path, include_deleted: bool = False) -> List[str]:
+    """Modified, added and untracked files relative to the repo root, plus deleted ones on request."""
     out = git(["status", "--porcelain", "-z", "--untracked-files=all"], root)
     if not out:
         return []
@@ -172,7 +179,7 @@ def dirty_files(root: Path) -> List[str]:
         status, name = entry[:2], entry[3:]
         if "R" in status or "C" in status:
             i += 1  # the original path of a rename/copy follows as its own entry
-        if "D" in status:
+        if "D" in status and not include_deleted:
             continue
         files.append(name)
     return files
@@ -180,25 +187,30 @@ def dirty_files(root: Path) -> List[str]:
 
 def snapshot(root: Path) -> Dict[str, Any]:
     head = (git(["rev-parse", "HEAD"], root) or "").strip()
-    dirty = {name: file_digest(root / name) for name in dirty_files(root)}
+    dirty = {name: file_digest(root / name) for name in dirty_files(root, include_deleted=True)}
     return {"head": head, "dirty": dirty, "root": str(root)}
 
 
 def changed_since(root: Path, baseline: Dict[str, Any], edited: Iterable[str]) -> List[str]:
-    """Files changed during the session: tool edits, plus git changes since the baseline."""
+    """Files changed during the session: tool edits, plus git changes since the baseline.
+
+    Deleted files are included, since their tests still need to run. A file that was already
+    dirty at the baseline counts only if its content has changed since, committed or not.
+    """
     changed = set()
     for rel in edited:
         if (root / rel).is_file():
             changed.add(rel)
     if baseline:
         before = baseline.get("dirty", {})
-        for name in dirty_files(root):
-            if name not in before or before[name] != file_digest(root / name):
-                changed.add(name)
+        candidates = set(dirty_files(root, include_deleted=True))
         head = baseline.get("head")
         if head:
-            committed = git(["diff", "--name-only", f"{head}..HEAD"], root) or ""
-            changed.update(n for n in committed.splitlines() if n and (root / n).is_file())
+            committed = git(["diff", "--name-only", "--no-renames", f"{head}..HEAD"], root) or ""
+            candidates.update(n for n in committed.splitlines() if n)
+        for name in candidates:
+            if name not in before or before[name] != file_digest(root / name):
+                changed.add(name)
     return sorted(changed)
 
 
@@ -217,9 +229,11 @@ def run(
     env_file: Optional[str] = None,
     extra_env: Optional[Dict[str, str]] = None,
 ) -> subprocess.CompletedProcess:
-    """Run a command; source `env_file` first (bash `set -a`) when it exists."""
-    if env_file and os.path.isfile(env_file):
-        cmd = ["bash", "-c", 'set -a; . "$0"; set +a; exec "$@"', env_file, *cmd]
+    """Run a command in `cwd`; source `env_file` (relative to `cwd`) first when it exists."""
+    if env_file:
+        env_path = Path(env_file) if os.path.isabs(env_file) else Path(cwd) / env_file
+        if env_path.is_file():
+            cmd = ["bash", "-c", 'set -a; . "$0"; set +a; exec "$@"', str(env_path), *cmd]
     env = dict(os.environ)
     for key, value in (extra_env or {}).items():
         env[str(key)] = str(value).replace("{root}", str(cwd))
