@@ -1,0 +1,273 @@
+"""Shared helpers for the kit plugin's hook scripts.
+
+Stdlib only, Python 3.8+. Every hook reads one JSON object on stdin and must never
+crash the session: on unexpected errors a hook exits 0 and stays silent.
+
+Per-repo behaviour comes from `.claude/kit.json` at the repository root. A repo
+without that file gets the guards with their defaults and no lint or test runs.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
+
+CONFIG_RELPATH = Path(".claude") / "kit.json"
+STATE_TTL_S = 7 * 24 * 3600
+
+DEFAULT_CONFIG: Dict[str, Any] = {
+    "python": ["python3"],
+    "lint": {"enabled": False, "args": ["-m", "ruff", "check", "--output-format", "concise"]},
+    "tests": {
+        "enabled": False,
+        "test_dirs": ["tests"],
+        "max_files": 8,
+        "pytest_args": ["-x", "-q", "--tb=short", "-p", "no:cacheprovider"],
+        "env_file": None,
+        "timeout_s": 300,
+    },
+    "guards": {"sql_destructive": "ask", "pytest_full_suite": "off"},
+}
+
+
+# ── input / output ─────────────────────────────────────────────────────────────
+def read_input() -> Dict[str, Any]:
+    try:
+        data = json.load(sys.stdin)
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001 — malformed input must not break the session
+        return {}
+
+
+def emit(obj: Dict[str, Any]) -> None:
+    sys.stdout.write(json.dumps(obj))
+    sys.stdout.flush()
+
+
+# ── repo + config ──────────────────────────────────────────────────────────────
+def git(args: List[str], cwd: Path, timeout: int = 30) -> Optional[str]:
+    try:
+        out = subprocess.run(
+            ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=timeout
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+def repo_root(cwd: Optional[str]) -> Optional[Path]:
+    start = Path(cwd or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    top = git(["rev-parse", "--show-toplevel"], start)
+    return Path(top.strip()) if top else None
+
+
+def _merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(base)
+    for key, value in over.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def load_config(root: Optional[Path]) -> Dict[str, Any]:
+    if root is None:
+        return DEFAULT_CONFIG
+    path = root / CONFIG_RELPATH
+    try:
+        user = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return DEFAULT_CONFIG
+    return _merge(DEFAULT_CONFIG, user if isinstance(user, dict) else {})
+
+
+def resolve_python(config: Dict[str, Any], root: Path) -> Optional[str]:
+    """First usable interpreter: paths are relative to the repo root, bare names come from PATH.
+
+    The path is made absolute but symlinks are kept, so a venv's python still finds its venv.
+    """
+    candidates = config.get("python") or ["python3"]
+    if isinstance(candidates, str):
+        candidates = [candidates]
+    for cand in candidates:
+        if "/" in cand:
+            path = Path(cand) if os.path.isabs(cand) else root / cand
+            if path.is_file() and os.access(str(path), os.X_OK):
+                return str(path.absolute())
+            continue
+        found = shutil.which(cand)
+        if found:
+            return found
+    return None
+
+
+# ── per-session state ──────────────────────────────────────────────────────────
+def state_dir() -> Path:
+    base = os.environ.get("CLAUDE_PLUGIN_DATA") or os.path.join(
+        os.path.expanduser("~"), ".cache", "claude-kit"
+    )
+    path = Path(base) / "state"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _state_path(session_id: str) -> Path:
+    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in session_id) or "nosession"
+    return state_dir() / f"{safe}.json"
+
+
+def load_state(session_id: str) -> Dict[str, Any]:
+    try:
+        return json.loads(_state_path(session_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(session_id: str, state: Dict[str, Any]) -> None:
+    path = _state_path(session_id)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def prune_old_state() -> None:
+    cutoff = time.time() - STATE_TTL_S
+    for entry in state_dir().glob("*.json"):
+        try:
+            if entry.stat().st_mtime < cutoff:
+                entry.unlink()
+        except OSError:
+            pass
+
+
+# ── change tracking ────────────────────────────────────────────────────────────
+HASH_LIMIT_BYTES = 20 * 1024 * 1024
+
+
+def file_digest(path: Path) -> Optional[str]:
+    """Content hash, or size+mtime for big files so a dirty dataset can't stall a hook."""
+    try:
+        st = path.stat()
+        if st.st_size > HASH_LIMIT_BYTES:
+            return f"stat:{st.st_size}:{st.st_mtime_ns}"
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def dirty_files(root: Path, include_deleted: bool = False) -> List[str]:
+    """Modified, added and untracked files relative to the repo root, plus deleted ones on request.
+
+    A staged rename's old path counts as deleted.
+    """
+    out = git(["status", "--porcelain", "-z", "--untracked-files=all"], root)
+    if not out:
+        return []
+    files: List[str] = []
+    entries = out.split("\0")
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        status, name = entry[:2], entry[3:]
+        if "R" in status or "C" in status:
+            source = entries[i] if i < len(entries) else ""
+            i += 1  # the original path of a rename/copy follows as its own entry
+            if "R" in status and include_deleted and source:
+                files.append(source)
+        if "D" in status and not include_deleted:
+            continue
+        files.append(name)
+    return files
+
+
+def snapshot(root: Path) -> Dict[str, Any]:
+    head = (git(["rev-parse", "HEAD"], root) or "").strip()
+    dirty = {name: file_digest(root / name) for name in dirty_files(root, include_deleted=True)}
+    return {"head": head, "dirty": dirty, "root": str(root)}
+
+
+def changed_since(root: Path, baseline: Dict[str, Any], edited: Iterable[str]) -> List[str]:
+    """Files changed during the session: tool edits, plus git changes since the baseline.
+
+    Deleted files are included, since their tests still need to run. A file that was already
+    dirty at the baseline counts only if its content has changed since, whether it was
+    committed, edited further or restored.
+    """
+    changed = set()
+    for rel in edited:
+        if (root / rel).is_file():
+            changed.add(rel)
+    if baseline:
+        before = baseline.get("dirty", {})
+        candidates = set(dirty_files(root, include_deleted=True)) | set(before)
+        head = baseline.get("head")
+        if head:
+            committed = git(["diff", "--name-only", "--no-renames", f"{head}..HEAD"], root) or ""
+            candidates.update(n for n in committed.splitlines() if n)
+        for name in candidates:
+            if name not in before or before[name] != file_digest(root / name):
+                changed.add(name)
+    return sorted(changed)
+
+
+def relative_to_root(root: Path, file_path: str) -> Optional[str]:
+    try:
+        return Path(file_path).resolve().relative_to(root.resolve()).as_posix()
+    except (ValueError, OSError):
+        return None
+
+
+# ── subprocess ─────────────────────────────────────────────────────────────────
+def run(
+    cmd: List[str],
+    cwd: Path,
+    timeout: int,
+    env_file: Optional[str] = None,
+    extra_env: Optional[Dict[str, str]] = None,
+) -> subprocess.CompletedProcess:
+    """Run a command in `cwd`; source `env_file` (relative to `cwd`) first when it exists."""
+    if env_file:
+        env_path = Path(env_file) if os.path.isabs(env_file) else Path(cwd) / env_file
+        if env_path.is_file():
+            cmd = ["bash", "-c", 'set -a; . "$0"; set +a; exec "$@"', str(env_path), *cmd]
+    env = dict(os.environ)
+    for key, value in (extra_env or {}).items():
+        env[str(key)] = str(value).replace("{root}", str(cwd))
+    return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout, env=env)
+
+
+def run_lint(root: Path, python: str, args: List[str], files: List[str], timeout: int = 120) -> Optional[str]:
+    """Lint `files`; return the report on findings, None when clean or the linter is missing.
+
+    `args` like ["-m", "ruff", ...] run under the repo's interpreter; if that interpreter
+    lacks the module, fall back to the same tool as a standalone executable on PATH.
+    """
+    cmd = [python, *args, *files]
+    proc = run(cmd, root, timeout=timeout)
+    if "No module named" in proc.stderr and len(args) >= 2 and args[0] == "-m":
+        exe = shutil.which(args[1])
+        if exe is None:
+            return None
+        proc = run([exe, *args[2:], *files], root, timeout=timeout)
+    if proc.returncode == 0:
+        return None
+    return tail(proc.stdout + proc.stderr, max_lines=40)
+
+
+def tail(text: str, max_lines: int = 60, max_chars: int = 6000) -> str:
+    lines = text.strip().splitlines()
+    if len(lines) > max_lines:
+        lines = [f"... ({len(lines) - max_lines} earlier lines trimmed)"] + lines[-max_lines:]
+    out = "\n".join(lines)
+    return out[-max_chars:]

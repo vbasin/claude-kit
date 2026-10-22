@@ -1,0 +1,23 @@
+{
+  "python": [".venv/bin/python", "python3"],
+  "lint": {
+    "enabled": true,
+    "args": ["-m", "ruff", "check", "--output-format", "concise"]
+  },
+  "tests": {
+    "enabled": true,
+    "test_dirs": ["tests"],
+    "import_roots": ["src"],
+    "max_files": 8,
+    "exclude": [],
+    "pytest_args": ["-x", "-q", "--tb=short", "-p", "no:cacheprovider"],
+    "env_file": null,
+    "env": {},
+    "timeout_s": 300
+  },
+  "guards": {
+    "sql_destructive": "ask",
+    "pytest_full_suite": "off",
+    "patterns": []
+  }
+}
