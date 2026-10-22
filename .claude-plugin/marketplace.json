@@ -1,0 +1,19 @@
+{
+  "name": "vtech-kit",
+  "description": "vbasin's shared Claude Code setup: one source for hooks, subagents and skills used across repos.",
+  "owner": {
+    "name": "vbasin"
+  },
+  "plugins": [
+    {
+      "name": "kit",
+      "source": "./plugins/kit",
+      "description": "Session-scoped lint+test verification, guards, reviewer/test-runner agents, and workflow skills."
+    },
+    {
+      "name": "quant",
+      "source": "./plugins/quant",
+      "description": "Causality (look-ahead leakage) and SQL/TimescaleDB reviewers for quant research code."
+    }
+  ]
+}
