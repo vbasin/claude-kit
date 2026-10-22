@@ -1,6 +1,6 @@
 ---
 name: deliver
-description: Take a task from request to reviewed change: size the work, route it (this session, parallel subagents, /batch or a dynamic workflow), run it, verify it, review it. Use at the start of any request beyond one obvious edit — a feature, a bug, an audit, a migration or a sweep.
+description: "Take a task from request to reviewed change: size the work, route it (this session, parallel subagents, /batch or a dynamic workflow), run it, verify it, review it. Use at the start of any request beyond one obvious edit — a feature, a bug, an audit, a migration or a sweep."
 argument-hint: "<what you want built, fixed or audited>"
 ---
 
@@ -11,7 +11,7 @@ You own this task end to end. Decide the routing yourself and say what you chose
 ## 1. Frame it
 
 - Restate the goal in one sentence, and name the **done-check**: the command that proves it works (a scoped test target, a test file, a script). No done-check available → say so and pick the closest one.
-- Requirements unclear or the design is not obvious → run `/kit:spec <feature>` instead and stop. A written spec implemented in a fresh session beats a long interview transcript.
+- Requirements unclear or the design is not obvious → stop and ask the user to run `/kit:spec <feature>` themselves (it is user-only, so you cannot start it). A written spec implemented in a fresh session beats a long interview transcript.
 - Read `.claude/kit.json`. Its `routing` block (optional) names this repo's gates and reviewers: `gates` map path globs to the command that gates them, `reviewers` map path globs to the agent that must see the diff. Use them in steps 4 and 5. No block → work the gates out from the repo (`make help`, the Makefile, CI) and say which you used.
 
 ## 2. Size it

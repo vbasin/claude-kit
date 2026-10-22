@@ -464,3 +464,23 @@ def test_policy_outside_a_repo_still_prints(tmp_path: Path, data_dir: Path) -> N
 def test_policy_survives_a_broken_config(repo: Path, data_dir: Path) -> None:
     (repo / ".claude" / "kit.json").write_text("{ not json")
     assert "deliver" in policy_context({"cwd": str(repo)}, data_dir)
+
+
+# ── plugin metadata ────────────────────────────────────────────────────────────
+def test_every_frontmatter_value_is_valid_yaml() -> None:
+    """A plain YAML scalar may not contain ': '. An unquoted description that does
+    makes the whole frontmatter unparseable, and the skill or agent silently fails
+    to load."""
+    root = Path(__file__).resolve().parents[1] / "plugins"
+    offenders = []
+    for path in sorted(root.rglob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        if not text.startswith("---\n"):
+            continue
+        for line in text.split("---\n", 2)[1].splitlines():
+            key, sep, value = line.partition(": ")
+            if not sep or not key or not key[0].isalpha() or " " in key:
+                continue
+            if ": " in value and value[:1] not in {'"', "'", "|", ">"}:
+                offenders.append(f"{path.relative_to(root)}: {key}")
+    assert not offenders, f"unquoted ': ' in frontmatter: {offenders}"

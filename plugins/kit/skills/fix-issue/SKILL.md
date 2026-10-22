@@ -1,6 +1,6 @@
 ---
 name: fix-issue
-description: Fix a GitHub issue end to end: read it, reproduce, fix, verify, and open a PR.
+description: "Fix a GitHub issue end to end: read it, reproduce, fix, verify, and open a PR."
 argument-hint: "<issue number or URL>"
 disable-model-invocation: true
 allowed-tools: Bash(gh issue view *), Bash(gh pr create *)
