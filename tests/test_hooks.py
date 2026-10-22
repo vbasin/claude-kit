@@ -181,14 +181,26 @@ def test_filtered_delete_passes_in_deny_mode() -> None:
     assert check("psql -c 'DELETE FROM ticks /* WHERE id = 1 */;'", deny)[0] == "deny"
 
 
+def test_full_suite_guard_resolves_absolute_paths() -> None:
+    root = Path("/opt/app")
+    assert check("python -m pytest /opt/app/tests -m acquisition", CFG, root)[0] == "ask"
+    assert check("pytest /opt/app/", CFG, root)[0] == "ask"
+    assert check("pytest ./tests/", CFG, root)[0] == "ask"
+    assert check("pytest /opt/app/tests/test_a.py", CFG, root) is None
+    assert check("pytest /elsewhere/tests", CFG, root) is None
+    assert check("pytest ../tests", CFG, root, "/opt/app/src")[0] == "ask"
+    assert check("pytest ../tests/test_a.py", CFG, root, "/opt/app/src") is None
+
+
 def test_full_suite_guard_off_by_default() -> None:
     assert check("pytest", {"guards": {}, "tests": {}}) is None
     assert is_full_suite("pytest", ["tests"])
 
 
 def test_guard_hook_output(repo: Path, data_dir: Path) -> None:
-    out = hook("bash_guard.py", {"cwd": str(repo), "tool_input": {"command": "pytest"}}, data_dir)
-    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+    for command in ("pytest", f"python -m pytest {repo}/tests -q"):
+        out = hook("bash_guard.py", {"cwd": str(repo), "tool_input": {"command": command}}, data_dir)
+        assert out["hookSpecificOutput"]["permissionDecision"] == "ask", command
     assert hook("bash_guard.py", {"cwd": str(repo), "tool_input": {"command": "ls"}}, data_dir) == {}
 
 

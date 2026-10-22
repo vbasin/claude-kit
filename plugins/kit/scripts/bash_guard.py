@@ -10,9 +10,11 @@ Extra repo-specific patterns go in `guards.patterns`: [{"regex", "reason", "deci
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from kit_common import emit, load_config, read_input, repo_root
@@ -187,8 +189,24 @@ def _pytest_args(seg: List[str]) -> Optional[List[str]]:
     return None
 
 
-def is_full_suite(command: str, test_dirs: List[str]) -> bool:
-    top = {d.strip("./").rstrip("/") for d in test_dirs} | {""}
+def _norm(path: str, root: Optional[Path]) -> str:
+    """`path` normalised, and made relative to the repo root when it is an absolute path inside it."""
+    if root is not None and os.path.isabs(path):
+        for base in (root, root.resolve()):
+            try:
+                path = Path(path).relative_to(base).as_posix()
+                break
+            except ValueError:
+                continue
+    norm = os.path.normpath(path)
+    return "" if norm == "." else norm
+
+
+def is_full_suite(
+    command: str, test_dirs: List[str], root: Optional[Path] = None, cwd: Optional[str] = None
+) -> bool:
+    """A path counts as a suite root as written, or resolved against `cwd` (e.g. `../tests`)."""
+    top = {_norm(d, root) for d in test_dirs} | {""}
     for seg in _segments(command):
         args = _pytest_args(seg)
         if args is None:
@@ -205,12 +223,17 @@ def is_full_suite(command: str, test_dirs: List[str]) -> bool:
                 skip = tok in PYTEST_VALUE_OPTS
                 continue
             paths.append(tok)
-        if not paths or any(p.strip("./").rstrip("/") in top for p in paths):
+        if not paths:
             return True
+        for p in paths:
+            if _norm(p, root) in top or (cwd and _norm(os.path.join(cwd, p), root) in top):
+                return True
     return False
 
 
-def check(command: str, config: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+def check(
+    command: str, config: Dict[str, Any], root: Optional[Path] = None, cwd: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
     guards = config.get("guards", {})
     mode = guards.get("sql_destructive", "ask")
     if mode != "off" and sql_destructive(command):
@@ -219,7 +242,7 @@ def check(command: str, config: Dict[str, Any]) -> Optional[Tuple[str, str]]:
             "needs explicit approval."
         )
     mode = guards.get("pytest_full_suite", "off")
-    if mode != "off" and is_full_suite(command, config.get("tests", {}).get("test_dirs", ["tests"])):
+    if mode != "off" and is_full_suite(command, config.get("tests", {}).get("test_dirs", ["tests"]), root, cwd):
         return mode, (
             "This runs the whole test suite. The repo's rules say to run a scoped gate instead "
             "unless the user asked for the full suite."
@@ -238,7 +261,8 @@ def main() -> int:
     command = (data.get("tool_input") or {}).get("command") or ""
     if not command:
         return 0
-    hit = check(command, load_config(repo_root(data.get("cwd"))))
+    root = repo_root(data.get("cwd"))
+    hit = check(command, load_config(root), root, data.get("cwd"))
     if hit is None:
         return 0
     decision, reason = hit
