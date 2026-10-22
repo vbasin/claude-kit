@@ -12,7 +12,7 @@ Set up this repository to use the kit. Templates are in `${CLAUDE_PLUGIN_ROOT}/t
    - If neither exists, run `/init`, then cut the result to what Claude can't infer from the code.
    - Keep `CLAUDE.md` short. Use `${CLAUDE_PLUGIN_ROOT}/templates/CLAUDE.md` as the shape.
 3. **Settings:** start from `${CLAUDE_PLUGIN_ROOT}/templates/.claude/settings.json`:
-   - pre-approve the repo's real build, test and lint commands
+   - pre-approve the repo's real build, test and lint commands, each as exactly as it can be written. Leave read-only git (`status`, `diff`, `log`, `show`) to Claude Code's built-in check: a rule like `git diff *` would also approve `git diff --output=<file>`, which writes
    - deny reads of secrets and bulky generated data
    - add ask rules for destructive commands
    - set `worktree.baseRef` to `"head"` if day-to-day work happens on a branch other than the default
