@@ -34,6 +34,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "timeout_s": 300,
     },
     "guards": {"sql_destructive": "ask", "pytest_full_suite": "off"},
+    # Read by session_policy.py; `gates` and `reviewers` are read by the `deliver` skill.
+    "routing": {"enabled": True, "note": "", "gates": [], "reviewers": []},
 }
 
 

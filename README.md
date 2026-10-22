@@ -4,7 +4,7 @@ One shared source for the Claude Code setup used across my repos (ML_analytics, 
 
 | Plugin | What it gives every repo that enables it |
 |---|---|
-| `kit` | Hooks that lint and test what Claude changed before it can finish, guards on destructive commands, `reviewer` / `test-runner` / `security-reviewer` subagents, and the skills `/kit:verify`, `/kit:scale-out`, `/kit:spec`, `/kit:fix-issue`, `/kit:adopt` |
+| `kit` | One prompt is enough: `/kit:deliver` sizes a task and routes it, and a SessionStart hook tells Claude to use it. Plus hooks that lint and test what Claude changed before it can finish, guards on destructive commands, `reviewer` / `test-runner` / `security-reviewer` subagents, and the skills `/kit:verify`, `/kit:scale-out`, `/kit:spec`, `/kit:fix-issue`, `/kit:adopt` |
 | `quant` | `causality-reviewer` (look-ahead leakage) and `query-reviewer` (SQL/TimescaleDB) subagents |
 
 ## What lives where
@@ -48,13 +48,33 @@ Plugins here have **no `version` field on purpose**, so installs track the lates
 
 To make updates automatic, open `/plugin` → **Marketplaces** → `vtech-kit` → **Enable auto-update**. If you ever need to hold a repo on a known-good state, add `"version": "x.y.z"` to the plugin's `plugin.json`. Users then only move when you bump it.
 
+## One prompt, not a routing decision
+
+The point of the setup is that the user describes the outcome and Claude works out the scale. Two pieces do that:
+
+- **`/kit:deliver`** holds the protocol: frame the goal and its done-check, size the work, choose between this session, parallel subagents, `/batch` and an `ultracode:` workflow, brief the workers, run the repo's gates, run the matching reviewers, then report. It also names the harness gaps it hits (a missing scope, a rule worth writing) instead of silently widening the job.
+- **`session_policy.py`** prints that instruction into every session, so Claude reaches for `deliver` on its own rather than waiting to be told which tool to use.
+
+A repo points `deliver` at its own gates and reviewers in `.claude/kit.json`:
+
+```json
+"routing": {
+  "note": "Work happens on dated branches; AGENTS.md governs.",
+  "gates": [ { "paths": ["src/acquisition/**"], "command": "make test-acquisition" } ],
+  "reviewers": [ { "paths": ["src/features/**", "src/labels/**"], "agent": "quant:causality-reviewer" } ]
+}
+```
+
+`"routing": { "enabled": false }` turns the session policy off for a repo that doesn't want it.
+
 ## How verification works
 
-`kit` runs four small stdlib-only Python hooks (`plugins/kit/scripts/`):
+`kit` runs five small stdlib-only Python hooks (`plugins/kit/scripts/`):
 
 | Hook | Script | Does |
 |---|---|---|
 | SessionStart | `session_start.py` | Records which files were already dirty, so only this session's changes are checked |
+| SessionStart | `session_policy.py` | Prints the routing policy into the session, so one prompt reaches the right scale of work |
 | PreToolUse (Bash) | `bash_guard.py` | Asks before `DROP`/`TRUNCATE`/`DELETE` without `WHERE`/chunk operations, before full-suite pytest runs (opt-in), and before repo-specific patterns |
 | PostToolUse (Edit/Write) | `post_edit.py` | Remembers the edited file and lints it at once |
 | Stop | `stop_verify.py` | Lints the session's changed `.py` files and runs only the tests that cover them, as explicit paths. On failure it sends the output back so Claude keeps working. If Claude stops again with the same failure, it lets the stop through with a notice, so a pre-existing failure can't trap a session |

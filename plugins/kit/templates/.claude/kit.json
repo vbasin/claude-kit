@@ -19,5 +19,13 @@
     "sql_destructive": "ask",
     "pytest_full_suite": "off",
     "patterns": []
+  },
+  "routing": {
+    "enabled": true,
+    "note": "",
+    "gates": [
+      { "paths": ["src/**"], "command": "make test" }
+    ],
+    "reviewers": []
   }
 }

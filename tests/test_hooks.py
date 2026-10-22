@@ -56,7 +56,7 @@ def set_config(root: Path, **changes: dict) -> None:
     path = root / ".claude" / "kit.json"
     cfg = json.loads(path.read_text())
     for key, value in changes.items():
-        cfg[key] = {**cfg[key], **value} if isinstance(value, dict) else value
+        cfg[key] = {**cfg.get(key, {}), **value} if isinstance(value, dict) else value
     path.write_text(json.dumps(cfg))
 
 
@@ -425,3 +425,42 @@ def test_manual_from_subdirectory_uses_root_relative_paths(repo: Path, data_dir:
     set_config(repo, python=PY_CANDIDATES, tests={"env_file": ".env.test"})
     proc = manual(repo / "src", "pkg/mathx.py", data_dir=data_dir)
     assert "tests/test_envcheck.py" in proc.stdout and proc.stdout.rstrip().endswith("kit verify: OK"), proc.stdout
+
+
+# ── session policy ─────────────────────────────────────────────────────────────
+def policy_context(payload: dict, data_dir: Path) -> str:
+    out = hook("session_policy.py", payload, data_dir)
+    specific = out.get("hookSpecificOutput", {})
+    assert specific.get("hookEventName") == "SessionStart", out
+    return specific.get("additionalContext", "")
+
+
+def test_policy_is_added_as_session_context(repo: Path, data_dir: Path) -> None:
+    text = policy_context({"cwd": str(repo), "session_id": uuid.uuid4().hex}, data_dir)
+    assert "deliver" in text and "ultracode" in text
+
+
+def test_policy_can_be_turned_off(repo: Path, data_dir: Path) -> None:
+    set_config(repo, routing={"enabled": False})
+    assert hook("session_policy.py", {"cwd": str(repo)}, data_dir) == {}
+
+
+def test_policy_appends_the_repo_note(repo: Path, data_dir: Path) -> None:
+    set_config(repo, routing={"note": "Work on dated branches.\n  Gates live in the Makefile."})
+    text = policy_context({"cwd": str(repo)}, data_dir)
+    assert text.endswith("Work on dated branches. Gates live in the Makefile.")
+
+
+def test_policy_caps_the_repo_note(repo: Path, data_dir: Path) -> None:
+    set_config(repo, routing={"note": "x" * 900})
+    text = policy_context({"cwd": str(repo)}, data_dir)
+    assert text.count("x") == 400
+
+
+def test_policy_outside_a_repo_still_prints(tmp_path: Path, data_dir: Path) -> None:
+    assert "deliver" in policy_context({"cwd": str(tmp_path)}, data_dir)
+
+
+def test_policy_survives_a_broken_config(repo: Path, data_dir: Path) -> None:
+    (repo / ".claude" / "kit.json").write_text("{ not json")
+    assert "deliver" in policy_context({"cwd": str(repo)}, data_dir)
