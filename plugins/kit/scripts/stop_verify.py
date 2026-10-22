@@ -200,8 +200,14 @@ def verify(root: Path, cfg: Dict[str, Any], changed: List[str]) -> Tuple[List[st
     """Return (failure sections, tests run, tests capped)."""
     python = resolve_python(cfg, root)
     changed_py = [f for f in changed if f.endswith(".py")]
-    if python is None or not changed_py:
+    if not changed_py:
         return [], [], 0
+    if python is None:
+        if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")):
+            return [], [], 0
+        return [f"No interpreter from `python` in .claude/kit.json exists here ({cfg.get('python') or ['python3']}), "
+                "so lint and tests did not run. Create it, add a fallback such as \"python3\", or "
+                "disable lint and tests."], [], 0
     failures: List[str] = []
     lint_out = lint_files(root, python, cfg, [f for f in changed_py if (root / f).is_file()])
     if lint_out:

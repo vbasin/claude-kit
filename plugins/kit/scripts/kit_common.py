@@ -164,7 +164,10 @@ def file_digest(path: Path) -> Optional[str]:
 
 
 def dirty_files(root: Path, include_deleted: bool = False) -> List[str]:
-    """Modified, added and untracked files relative to the repo root, plus deleted ones on request."""
+    """Modified, added and untracked files relative to the repo root, plus deleted ones on request.
+
+    A staged rename's old path counts as deleted.
+    """
     out = git(["status", "--porcelain", "-z", "--untracked-files=all"], root)
     if not out:
         return []
@@ -178,7 +181,10 @@ def dirty_files(root: Path, include_deleted: bool = False) -> List[str]:
             continue
         status, name = entry[:2], entry[3:]
         if "R" in status or "C" in status:
+            source = entries[i] if i < len(entries) else ""
             i += 1  # the original path of a rename/copy follows as its own entry
+            if "R" in status and include_deleted and source:
+                files.append(source)
         if "D" in status and not include_deleted:
             continue
         files.append(name)
@@ -195,7 +201,8 @@ def changed_since(root: Path, baseline: Dict[str, Any], edited: Iterable[str]) -
     """Files changed during the session: tool edits, plus git changes since the baseline.
 
     Deleted files are included, since their tests still need to run. A file that was already
-    dirty at the baseline counts only if its content has changed since, committed or not.
+    dirty at the baseline counts only if its content has changed since, whether it was
+    committed, edited further or restored.
     """
     changed = set()
     for rel in edited:
@@ -203,7 +210,7 @@ def changed_since(root: Path, baseline: Dict[str, Any], edited: Iterable[str]) -
             changed.add(rel)
     if baseline:
         before = baseline.get("dirty", {})
-        candidates = set(dirty_files(root, include_deleted=True))
+        candidates = set(dirty_files(root, include_deleted=True)) | set(before)
         head = baseline.get("head")
         if head:
             committed = git(["diff", "--name-only", "--no-renames", f"{head}..HEAD"], root) or ""

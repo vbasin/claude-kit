@@ -51,12 +51,14 @@ def _delete_without_where(text: str) -> bool:
 
     The statement ends at `;`, at the quote that encloses it (the `-c "..."` string or a
     host-language string), or at a shell separator. Quoted identifiers and string literals
-    inside it are skipped, so `DELETE FROM "ticks" WHERE ...` counts as filtered.
+    inside it are skipped, so `DELETE FROM "ticks" WHERE ...` counts as filtered. So are SQL
+    comments and anything in parentheses, since only the DELETE's own WHERE filters it.
     """
     for m in DELETE_FROM.finditer(text):
         enclosing = _open_quotes(text, m.start())
         host = enclosing[-1] if enclosing else None
         inner: Optional[str] = None
+        depth = 0
         visible: List[str] = []
         i = m.end()
         while i < len(text):
@@ -71,7 +73,19 @@ def _delete_without_where(text: str) -> bool:
                 break
             elif ch in QUOTES:
                 inner = ch
-            else:
+            elif text.startswith("--", i) or text.startswith("/*", i):
+                close = "\n" if ch == "-" else "*/"
+                ends = [j for j in (text.find(close, i + 2), text.find(host, i + 2) if host else -1) if j >= 0]
+                i = min(ends) if ends else len(text)
+                if text.startswith("*/", i):
+                    i += 2
+                visible.append(" ")
+                continue
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth = max(depth - 1, 0)
+            elif depth == 0:
                 visible.append(ch)
             i += 1
         if not WHERE.search("".join(visible)):
@@ -96,11 +110,21 @@ def sql_destructive(command: str) -> bool:
     return found < len(DELETE_FROM.findall(command)) and _delete_without_where(command)
 
 # pytest options that consume the following token as their value.
+# Core options are pytest 9's full list (`--cache-show` and `--debug` take an optional value,
+# which argparse still takes from the next word); the rest come from common plugins.
 PYTEST_VALUE_OPTS = {
-    "-k", "-m", "-p", "-c", "-o", "-W", "-n", "--tb", "--maxfail", "--rootdir",
-    "--deselect", "--ignore", "--ignore-glob", "--confcutdir", "--basetemp",
-    "--durations", "--junitxml", "--log-level", "--color", "--import-mode",
-    "--override-ini", "--cov", "--cov-report", "--timeout", "--dist",
+    "-c", "-k", "-m", "-o", "-p", "-r", "-W",
+    "--assert", "--basetemp", "--cache-show", "--capture", "--code-highlight", "--color",
+    "--confcutdir", "--config-file", "--debug", "--deselect", "--doctest-glob",
+    "--doctest-report", "--durations", "--durations-min", "--ignore", "--ignore-glob",
+    "--import-mode", "--junit-prefix", "--junit-xml", "--junitprefix", "--junitxml",
+    "--last-failed-no-failures", "--lfnf", "--log-auto-indent", "--log-cli-date-format",
+    "--log-cli-format", "--log-cli-level", "--log-date-format", "--log-disable", "--log-file",
+    "--log-file-date-format", "--log-file-format", "--log-file-level", "--log-file-mode",
+    "--log-format", "--log-level", "--max-warnings", "--maxfail", "--override-ini",
+    "--pastebin", "--pdbcls", "--pythonwarnings", "--report-chars", "--rootdir",
+    "--show-capture", "--tb", "--verbosity",
+    "-n", "--dist", "--cov", "--cov-report", "--timeout",
 }
 SEPARATOR_CHARS = set(";&|\n")
 REDIRECT_CHARS = set("<>&")

@@ -129,6 +129,14 @@ CFG = {"guards": {"sql_destructive": "ask", "pytest_full_suite": "ask"}, "tests"
     'psql -c "DELETE FROM ticks" && psql -c "SELECT 1 WHERE true"',
     "python -c \"conn.execute('DELETE FROM ticks'); conn.execute('SELECT 1 WHERE true')\"",
     "psql <<'SQL'\nDELETE FROM ticks;\nSQL",
+    # a WHERE in a comment or a subquery does not filter the DELETE
+    "psql -c 'DELETE FROM ticks /* WHERE id = 1 */;'",
+    'psql -c "DELETE FROM ticks -- WHERE id = 1"',
+    "psql <<'SQL'\nDELETE FROM ticks -- WHERE id = 1\n;\nSQL",
+    "psql -c 'DELETE FROM ticks USING (SELECT 1 WHERE true) AS s;'",
+    # options that take a value do not name a test path
+    "pytest --log-cli-level INFO",
+    "python -m pytest --capture sys",
     # an unquoted newline ends a command; redirections are not test paths
     "cd /opt/app\npython -m pytest",
     "pytest -q 2>&1 | tail -5",
@@ -154,6 +162,9 @@ def test_guard_asks(command: str) -> None:
     'psql -c "DELETE FROM \\"ticks\\" WHERE id = 1;"',
     "psql <<'SQL'\nDELETE FROM ticks\nWHERE ts < now();\nSQL",
     "python -c \"conn.execute('DELETE FROM ticks WHERE id = %s', (1,))\"",
+    "psql -c 'DELETE FROM ticks /* stale rows */ WHERE ts < now();'",
+    "psql -c 'DELETE FROM ticks t USING (SELECT id FROM old) s WHERE t.id = s.id;'",
+    "pytest --log-cli-level INFO tests/test_a.py",
     # a quoted newline or a line continuation does not split the command
     "python -m pytest \\\n  tests/test_a.py",
     'psql -c "SELECT 1\nFROM x"\npytest tests/test_a.py',
@@ -167,6 +178,7 @@ def test_filtered_delete_passes_in_deny_mode() -> None:
     deny = {"guards": {"sql_destructive": "deny"}}
     assert check("psql -c 'DELETE FROM \"ticks\" WHERE id = 1;'", deny) is None
     assert check("psql -c 'DELETE FROM ticks;'", deny) == ("deny", check("psql -c 'DELETE FROM ticks;'", CFG)[1])
+    assert check("psql -c 'DELETE FROM ticks /* WHERE id = 1 */;'", deny)[0] == "deny"
 
 
 def test_full_suite_guard_off_by_default() -> None:
@@ -317,6 +329,37 @@ def test_deleted_module_still_runs_its_tests(repo: Path, data_dir: Path) -> None
         sh(repo, "git", "checkout", "HEAD~1" if committed else "HEAD", "--", "src/pkg/mathx.py")
         if committed:
             commit(repo, "restore mathx")
+
+
+def test_staged_rename_runs_tests_of_the_old_name(repo: Path, data_dir: Path) -> None:
+    sid = str(uuid.uuid4())
+    base = {"session_id": sid, "cwd": str(repo)}
+    hook("session_start.py", {**base, "source": "startup"}, data_dir)
+    sh(repo, "git", "mv", "src/pkg/mathx.py", "src/pkg/renamed.py")
+    out = hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir)
+    feedback = out["hookSpecificOutput"]["additionalContext"]
+    assert "tests/test_mathx.py" in feedback and "mathx" in feedback
+
+
+def test_restored_baseline_dirty_file_runs_its_tests(repo: Path, data_dir: Path) -> None:
+    target = repo / "src" / "pkg" / "mathx.py"
+    target.write_text("def double(x):\n    return x * 3\n")
+    commit(repo, "break double")
+    target.write_text("def double(x):\n    return x * 2\n")  # fixed, uncommitted, before the session
+    sid = str(uuid.uuid4())
+    base = {"session_id": sid, "cwd": str(repo)}
+    hook("session_start.py", {**base, "source": "startup"}, data_dir)
+    sh(repo, "git", "checkout", "--", "src/pkg/mathx.py")  # Bash throws the fix away
+    out = hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir)
+    assert "assert 6 == 4" in out["hookSpecificOutput"]["additionalContext"]
+
+
+def test_missing_interpreter_is_a_failure(repo: Path, data_dir: Path) -> None:
+    set_config(repo, python=PY_CANDIDATES)  # .venv not created yet
+    proc = manual(repo, "src/pkg/mathx.py", data_dir=data_dir)
+    assert proc.returncode == 1 and "lint and tests did not run" in proc.stdout
+    set_config(repo, lint={"enabled": False}, tests={"enabled": False})
+    assert manual(repo, "src/pkg/mathx.py", data_dir=data_dir).returncode == 0
 
 
 def test_committed_baseline_dirty_file_is_ignored(repo: Path, data_dir: Path) -> None:
