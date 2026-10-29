@@ -82,7 +82,7 @@ A repo points `deliver` at its own gates and reviewers in `.claude/kit.json`:
 | SessionStart | `session_policy.py` | Prints the routing policy into the session, so one prompt reaches both the right approach and the right scale of work |
 | PreToolUse (Bash) | `bash_guard.py` | Asks before `DROP`/`TRUNCATE`/`DELETE` without `WHERE`/chunk operations, before full-suite pytest runs (opt-in), and before repo-specific patterns |
 | PostToolUse (Edit/Write) | `post_edit.py` | Remembers the edited file and lints it at once |
-| Stop | `stop_verify.py` | Lints the session's changed `.py` files and runs only the tests that cover them, as explicit paths. On failure it sends the output back so Claude keeps working. If Claude stops again with the same failure, it lets the stop through with a notice, so a pre-existing failure can't trap a session |
+| Stop | `stop_verify.py` | Lints the session's changed `.py` files and runs all discovered tests for source changes, and directly related tests for test-only changes, as explicit paths. On failure it sends the output back so Claude keeps working. If Claude stops again with the same failure, it lets the stop through with a notice, so a pre-existing failure can't trap a session |
 
 Tests are picked per changed file, deleted files included: its own test file, `test_<module>*.py`, test files that import the module or name it in a patch target, and for a `conftest.py` the test files beneath it, up to `tests.max_files`. Each run starts with an empty bytecode cache, and an interpreter without pytest counts as a failure rather than a pass. A repo can add guard patterns in `.claude/kit.json`:
 

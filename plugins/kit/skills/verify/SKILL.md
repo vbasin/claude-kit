@@ -11,7 +11,7 @@ Run the kit's verification on the changed files (or on the files given as argume
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/stop_verify.py" --manual $ARGUMENTS
 ```
 
-It lints the changed Python files and runs only the test files that cover them, as explicit paths. It never runs the whole suite.
+It lints the changed Python files and runs all discovered tests for source changes, and directly related tests for test-only changes, as explicit paths. Source changes run the configured test directories because indirect dependencies cannot be inferred reliably.
 
 Then:
 - **OK:** say which tests ran. If none ran, say that too, since "no covering tests" is a gap worth naming.

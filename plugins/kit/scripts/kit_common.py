@@ -80,14 +80,22 @@ def _merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def load_config(root: Optional[Path]) -> Dict[str, Any]:
+def load_config(root: Optional[Path], strict: bool = False) -> Dict[str, Any]:
     if root is None:
         return DEFAULT_CONFIG
     path = root / CONFIG_RELPATH
     try:
         user = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return DEFAULT_CONFIG
+    except (OSError, ValueError) as exc:
+        if strict:
+            raise ValueError(f"Invalid kit configuration: {exc}") from exc
+        return DEFAULT_CONFIG
+    if strict and (not isinstance(user, dict) or any(
+        k in user and not isinstance(user[k], dict) for k in ("lint", "tests", "guards", "routing")
+    )):
+        raise ValueError("Invalid kit configuration: expected objects for lint, tests, guards and routing")
     return _merge(DEFAULT_CONFIG, user if isinstance(user, dict) else {})
 
 
@@ -260,7 +268,7 @@ def run_lint(root: Path, python: str, args: List[str], files: List[str], timeout
     if "No module named" in proc.stderr and len(args) >= 2 and args[0] == "-m":
         exe = shutil.which(args[1])
         if exe is None:
-            return None
+            return f"lint unavailable: {args[1]} is not installed"
         proc = run([exe, *args[2:], *files], root, timeout=timeout)
     if proc.returncode == 0:
         return None

@@ -261,7 +261,7 @@ def test_stop_blocks_once_then_lets_go(repo: Path, data_dir: Path) -> None:
     first = hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir)
     feedback = first["hookSpecificOutput"]["additionalContext"]
     assert "tests/test_mathx.py" in feedback and "assert 6 == 4" in feedback
-    assert "test_unrelated" not in feedback
+    assert "tests/test_unrelated.py" in feedback
 
     again = hook("stop_verify.py", {**base, "stop_hook_active": True}, data_dir)
     assert "hookSpecificOutput" not in again and "still failing" in again["systemMessage"]
@@ -277,6 +277,7 @@ def test_preexisting_dirty_file_is_ignored(repo: Path, data_dir: Path) -> None:
     hook("session_start.py", {**base, "source": "startup"}, data_dir)
     assert hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir) == {}
 
+    set_config(repo, tests={"enabled": False})
     other = repo / "src" / "pkg" / "other.py"
     other.write_text("def other():\n    return 2\n")  # changed via Bash, not an Edit tool
     assert hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir) == {}
@@ -371,7 +372,7 @@ def test_missing_interpreter_is_a_failure(repo: Path, data_dir: Path) -> None:
     proc = manual(repo, "src/pkg/mathx.py", data_dir=data_dir)
     assert proc.returncode == 1 and "lint and tests did not run" in proc.stdout
     set_config(repo, lint={"enabled": False}, tests={"enabled": False})
-    assert manual(repo, "src/pkg/mathx.py", data_dir=data_dir).returncode == 0
+    assert manual(repo, "src/pkg/mathx.py", data_dir=data_dir).returncode == 2
 
 
 def test_committed_baseline_dirty_file_is_ignored(repo: Path, data_dir: Path) -> None:
@@ -379,6 +380,7 @@ def test_committed_baseline_dirty_file_is_ignored(repo: Path, data_dir: Path) ->
     sid = str(uuid.uuid4())
     base = {"session_id": sid, "cwd": str(repo)}
     hook("session_start.py", {**base, "source": "startup"}, data_dir)
+    set_config(repo, tests={"enabled": False})
     (repo / "src" / "pkg" / "other.py").write_text("def other():\n    return 2\n")
     commit(repo, "session work, sweeping in the pre-existing edit")
     assert hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir) == {}
@@ -530,3 +532,46 @@ def test_every_frontmatter_value_is_valid_yaml() -> None:
             if ": " in value and value[:1] not in {'"', "'", "|", ">"}:
                 offenders.append(f"{path.relative_to(root)}: {key}")
     assert not offenders, f"unquoted ': ' in frontmatter: {offenders}"
+
+
+def test_missing_linter_is_not_a_pass(repo: Path, data_dir: Path) -> None:
+    set_config(repo, lint={"args": ["-m", "kit_missing_linter_82479"]}, tests={"enabled": False})
+    result = manual(repo, "src/pkg/mathx.py", data_dir=data_dir)
+    assert result.returncode == 1 and "lint unavailable" in result.stdout
+
+
+def test_transitive_failure_and_cap_are_not_hidden(repo: Path, data_dir: Path) -> None:
+    (repo / "src/pkg/consumer.py").write_text("from pkg.mathx import double\n")
+    for n in range(9):
+        (repo / f"tests/test_indirect_{n:02}.py").write_text(
+            "from pkg.consumer import double\n" + f"def test_indirect(): assert double(2) == {4 if n < 8 else 9}\n"
+        )
+    result = manual(repo, "src/pkg/mathx.py", data_dir=data_dir)
+    assert result.returncode == 1 and "test_indirect_08" in result.stdout
+
+
+def test_empty_collection_is_not_a_pass(repo: Path, data_dir: Path) -> None:
+    set_config(repo, tests={"pytest_args": ["-q", "-k", "no_such_test_82479"]})
+    result = manual(repo, "src/pkg/mathx.py", data_dir=data_dir)
+    assert result.returncode == 1 and "collected no tests" in result.stdout
+
+
+def test_broken_config_reports_unavailable(repo: Path, data_dir: Path) -> None:
+    (repo / ".claude/kit.json").write_text('{"lint": null}')
+    result = manual(repo, "src/pkg/mathx.py", data_dir=data_dir)
+    assert result.returncode == 2 and "Invalid kit configuration" in result.stdout
+    out = hook("stop_verify.py", {"session_id": "bad-config", "cwd": str(repo)}, data_dir)
+    assert "Verification unavailable" in out["hookSpecificOutput"]["additionalContext"]
+
+
+def test_changed_test_config_invalidates_prior_pass(repo: Path, data_dir: Path) -> None:
+    (repo / "tests/test_env.py").write_text(
+        "import os\ndef test_env(): assert os.getenv('KIT_TEST') == 'good'\n"
+    )
+    set_config(repo, tests={"env": {"KIT_TEST": "good"}})
+    base = {"session_id": "cache-check", "cwd": str(repo)}
+    hook("session_start.py", base, data_dir)
+    (repo / "src/pkg/mathx.py").write_text("def double(x):\n    return x * 2 + 0\n")
+    assert hook("stop_verify.py", base, data_dir) == {}
+    set_config(repo, tests={"env": {"KIT_TEST": "bad"}})
+    assert "test_env" in hook("stop_verify.py", base, data_dir)["hookSpecificOutput"]["additionalContext"]
