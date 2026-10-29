@@ -20,17 +20,32 @@ constraint, so find it before you draw anything.
 
 Find out whether this is solved before designing it. In order, stopping when one fits:
 
-1. Code in this repo that already does it or nearly does. Search; do not assume.
-2. A skill already enabled in this session.
-3. A skill available but not enabled, or a published plugin.
-4. An existing skill or module worth customising instead of rewriting. A plugin's own
+1. **A decision already recorded.** Read the decision logs (`routing.decisions`, else
+   the repo's own convention, else `.claude/decisions/`) before anything else. A past log
+   gives you its criteria, its rejected candidates and, in its last section, the condition
+   that would reverse it. Check that condition: still false → cite the log and build what
+   it chose, without re-deriving it. Now true → say which condition changed, and carry the
+   old candidates and objections into step 4 as the starting set rather than rediscovering
+   them. This is the cheapest step here and the one most often skipped.
+2. Code in this repo that already does it or nearly does. Search; do not assume.
+3. A skill already enabled in this session.
+4. A skill available but not enabled, or a published plugin. `claude plugin list` and
+   `claude plugin details <name>` are free and current; prefer them to recall, which is
+   how the same lookup gets done twice with different answers.
+5. An existing skill or module worth customising instead of rewriting. A plugin's own
    skill cannot be edited in place, so customising one means a new skill under its own
    name whose description says when to use it instead.
-5. Only then, something new.
+6. Only then, something new.
 
 If the answer turns on something that moves — a model, a tool, an API, a library version
 — look it up rather than recalling it. Training data goes stale, and a search is cheap
 next to building the wrong thing.
+
+Do not build a cached inventory of what exists. An index of installed skills and tools is
+stale the moment something is installed or removed, and a stale index asserting a
+capability confidently is worse than no index: the readouts above are free and never
+wrong. What is worth persisting is the part no command can tell you — what was decided,
+what was rejected, and why — which is what the decision logs already hold.
 
 ## 3. State the criteria before you generate
 
@@ -99,6 +114,7 @@ if set, else the repo's existing convention (an ADR directory, a decisions folde
 
 - Task: <the request> · Done-check: <the command or condition>
 - Binding constraint: <the one that settled it>
+- Supersedes: <the earlier log this replaces, and which of its reversal conditions came true — or "nothing">
 
 ## Criteria, in priority order
 
@@ -113,5 +129,11 @@ if set, else the repo's existing convention (an ADR directory, a decisions folde
 
 The last section matters most. A decision with no stated reversal condition cannot be
 reviewed later, and the log exists so the choice can be scored rather than asserted.
+
+Write it for step 2 of the next run, which will find it by searching that directory: put
+the subject in the filename and the slug, state each reversal condition as something
+checkable rather than a feeling, and when you supersede a log, say so in both — a line at
+the top of the old one pointing forward. Two live logs disagreeing about the same
+question is the one failure mode here, and it is worse than no log.
 
 Then hand the chosen design to `deliver`, which builds, verifies and reviews it.

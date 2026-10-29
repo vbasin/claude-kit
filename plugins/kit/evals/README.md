@@ -1,6 +1,6 @@
 # Does the kit actually help?
 
-Four cases, each one a prompt the kit claims to handle better than a bare session. Every
+Six cases, each one a prompt the kit claims to handle better than a bare session. Every
 case runs with the plugin and again with no plugin at all, and the number that matters is
 **Δ** — the with-arm score minus the without-arm score. A case that scores 1.0 in both
 arms is not evidence for the kit; it is evidence the model did it anyway.
@@ -18,7 +18,7 @@ claude plugin eval ./plugins/kit --ablation none --runs 2 --case obvious-fix-sta
 ```
 
 The suite uses your normal Claude Code credentials and counts against your plan's usage,
-so a full pass is 4 cases × 3 runs × 2 arms = **24 agent runs**, plus three short judge
+so a full pass is 6 cases × 3 runs × 2 arms = **36 agent runs**, plus three short judge
 calls per `llm` grader per run. `--runs 2` and `--case <glob>` are the two dials.
 Everything here is read-only: no `--allow-tools`, no `--scaffold`, no fixtures on disk —
 each prompt carries whatever the task needs, so the suite never touches a real repo.
@@ -29,8 +29,12 @@ Two cases grant `Agent`, which is in the read-only set and so needs no `--allow-
 `kit:reviewer`'s job. Without it those cases would measure a version of the kit with its
 adversary removed — the part most likely to be carrying the Δ. They pay for it in turns
 and tokens, which is why their `max_turns` and `timeout_seconds` are higher than the
-rest. `obvious-fix-stays-cheap` withholds `Agent` on purpose: the whole claim there is
-that nothing gets escalated, and the run should not have the means to.
+rest. `prior-decision-is-reused` grants it for the same reason as the first two, inverted: if
+a run ignores the record and re-derives the choice, delegating to the critic is part of
+what that costs, and the trace grader should be able to see it happen.
+`obvious-fix-stays-cheap` and `promotion-is-offered-not-taken` withhold `Agent` on
+purpose — the first because its whole claim is that nothing gets escalated and the run
+should not have the means to, the second because writing a wrap-up delegates to nobody.
 
 ## What each case measures
 
@@ -40,6 +44,8 @@ that nothing gets escalated, and the run should not have the means to.
 | `obvious-fix-stays-cheap` | The kit doesn't charge design ceremony for a one-line fix | **Near zero is the pass.** Strongly negative means the kit is making trivial work expensive |
 | `duplication-is-a-defect` | Duplication and dead config are reportable defects, named at their location | Positive: the standards floor in `deliver` and `reviewer` is landing |
 | `sweep-gets-fanned-out` | Independent mechanical work gets fanned out, and one route is chosen rather than offered | Positive: the routing table is being used, not just read |
+| `prior-decision-is-reused` | A decision already on record is reused rather than re-derived, while its reversal conditions hold | Positive: the loop reads what it wrote, so the same ground isn't re-covered |
+| `promotion-is-offered-not-taken` | A generic addition is offered to the shared kit with its cost, a repo-specific one stays local, and the move stays the user's | Positive: a discovery in one repo can reach the others |
 
 `obvious-fix-stays-cheap` is the one that can condemn the kit rather than praise it. Every
 always-on token and every escalation the kit adds is paid on trivial prompts too, and a
@@ -55,6 +61,10 @@ tells you whether the answer was right *and* whether the kit is what produced it
 - `llm` graders call a judge, so their rubrics are written as concrete PASS and FAIL
   conditions with formatting explicitly ruled out, because a judge that marks a correct
   answer wrong for its layout reads as a plugin regression.
+- One grader reads the whole session rather than the final message
+  (`no-fresh-derivation.md`, `focus: trace`). A reply can cite a recorded decision
+  correctly *after* re-deriving it from scratch, and a grader on the last message cannot
+  tell the difference — which would leave the actual regression unmeasured.
 - `tool_used` on `Skill` can never pass without the plugin, so Claude Code excludes it
   from the score in both arms and reports it as an indicator. `deliberate-fired.md` is
   one of those: it tells you the skill ran, it does not earn points.
