@@ -1,6 +1,6 @@
 # Does the kit actually help?
 
-Four cases, each one a prompt the kit claims to handle better than a bare session. Every
+Five cases, each one a prompt the kit claims to handle better than a bare session. Every
 case runs with the plugin and again with no plugin at all, and the number that matters is
 **Δ** — the with-arm score minus the without-arm score. A case that scores 1.0 in both
 arms is not evidence for the kit; it is evidence the model did it anyway.
@@ -18,7 +18,7 @@ claude plugin eval ./plugins/kit --ablation none --runs 2 --case obvious-fix-sta
 ```
 
 The suite uses your normal Claude Code credentials and counts against your plan's usage,
-so a full pass is 4 cases × 3 runs × 2 arms = **24 agent runs**, plus three short judge
+so a full pass is 5 cases × 3 runs × 2 arms = **30 agent runs**, plus three short judge
 calls per `llm` grader per run. `--runs 2` and `--case <glob>` are the two dials.
 Everything here is read-only: no `--allow-tools`, no `--scaffold`, no fixtures on disk —
 each prompt carries whatever the task needs, so the suite never touches a real repo.
@@ -31,6 +31,7 @@ each prompt carries whatever the task needs, so the suite never touches a real r
 | `obvious-fix-stays-cheap` | The kit doesn't charge design ceremony for a one-line fix | **Near zero is the pass.** Strongly negative means the kit is making trivial work expensive |
 | `duplication-is-a-defect` | Duplication and dead config are reportable defects, named at their location | Positive: the standards floor in `deliver` and `reviewer` is landing |
 | `sweep-gets-fanned-out` | Independent mechanical work gets fanned out, and one route is chosen rather than offered | Positive: the routing table is being used, not just read |
+| `prior-decision-is-reused` | A decision already on record is reused rather than re-derived, while its reversal conditions hold | Positive: the loop reads what it wrote, so the same ground isn't re-covered |
 
 `obvious-fix-stays-cheap` is the one that can condemn the kit rather than praise it. Every
 always-on token and every escalation the kit adds is paid on trivial prompts too, and a

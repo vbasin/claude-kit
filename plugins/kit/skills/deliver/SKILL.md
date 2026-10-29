@@ -97,3 +97,14 @@ When the task shows the harness is missing something, say so in the report and o
 - Knowledge needed only sometimes → propose a skill, not more `CLAUDE.md`. Put the case the way `deliberate` step 7 does: what it does, what it costs in always-on context, and the argument against it.
 - A review dimension this repo needs on every diff of a kind → propose an agent in the plugin.
 - A run worth repeating → save the workflow (`s` in `/workflows`) and commit it.
+
+What you add this way lands in the repo, which is where it should start: it is cheap to
+change and it only costs this repo's sessions. It stops there unless you say otherwise.
+So when the thing you added is **not about this repo** — it names no path, no schema, no
+service and no rule of this codebase, and you can describe what it does without saying
+which repo you were in — say in the report that it belongs in the kit, and what the case
+for it is. Moving it there makes every repo pay its always-on context
+(`claude plugin details <plugin>` prices that), so it is the user's call, not a quiet
+promotion. The same test run backwards is why most additions stay local: a skill that
+encodes this repo's gates, its data contracts or its directory layout is worth more here
+and worth nothing anywhere else.
