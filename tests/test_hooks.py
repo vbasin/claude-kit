@@ -456,6 +456,36 @@ def test_the_design_stage_is_wired_end_to_end() -> None:
     assert (kit / "agents" / "design-critic.md").is_file(), "the critic it names does not exist"
 
 
+def test_a_decision_is_written_to_be_found_again() -> None:
+    """The loop only avoids redoing work if step 2 reads what step 8 wrote. Both ends
+    name the same directory, and the template carries the two fields step 2 acts on."""
+    kit = Path(__file__).resolve().parents[1] / "plugins" / "kit"
+    deliberate = (kit / "skills" / "deliberate" / "SKILL.md").read_text()
+    look_up, record = deliberate.split("## 8. Record it", 1)
+    assert "routing.decisions" in look_up, "step 2 never reads the decision logs"
+    assert "routing.decisions" in record, "step 8 writes somewhere step 2 does not read"
+    assert "Supersedes" in record, "a log cannot replace an earlier one"
+    assert "What would change this decision" in record, "no reversal condition to check"
+    # Reading the log is only half of it. A log whose condition has fired has to reopen
+    # the decision from the field it already holds, or the next run pays for the
+    # comparison twice. `evals/reversed-decision-reopens` is what scores that happening.
+    assert "Now true" in look_up, "step 2 only handles a decision that still stands"
+    assert "starting set" in look_up, (
+        "a reopened decision has to start from the recorded candidates, not from nothing"
+    )
+    config = json.loads((kit / "templates" / ".claude" / "kit.json").read_text())
+    assert "decisions" in config["routing"], "the template never points anywhere"
+
+
+def test_a_generic_addition_is_offered_to_the_kit() -> None:
+    """Without this, every repo rebuilds the same skill and the kit never learns."""
+    deliver = (Path(__file__).resolve().parents[1] / "plugins" / "kit" / "skills"
+               / "deliver" / "SKILL.md").read_text()
+    harness = deliver.split("## Working out the harness as you go", 1)[1]
+    assert "belongs in the kit" in harness, "nothing promotes a generic addition"
+    assert "user's call" in harness, "promotion has to stay the user's decision"
+
+
 def test_policy_can_be_turned_off(repo: Path, data_dir: Path) -> None:
     set_config(repo, routing={"enabled": False})
     assert hook("session_policy.py", {"cwd": str(repo)}, data_dir) == {}

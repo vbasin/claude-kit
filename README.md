@@ -90,16 +90,49 @@ Tests are picked per changed file, deleted files included: its own test file, `t
 "guards": { "patterns": [ { "regex": "databento.*(download|get_range)", "reason": "Check the data cost first", "decision": "ask" } ] }
 ```
 
+## Does the kit help?
+
+`plugins/kit/evals/` is a seven-case `claude plugin eval` suite. Every case runs with the
+plugin and again with no plugin at all, so the number it reports is **Δ** — what the kit
+contributed, not what the model would have done anyway.
+
+```bash
+claude plugin eval ./plugins/kit --ablation with-without
+```
+
+| Case | Claim it can falsify |
+|---|---|
+| `design-not-handed-back` | The design is Claude's to settle, by comparing rivals against stated criteria |
+| `obvious-fix-stays-cheap` | The kit doesn't charge design ceremony for a one-line fix |
+| `duplication-is-a-defect` | Duplication and dead config are reportable defects, named at their location |
+| `sweep-gets-fanned-out` | Independent mechanical work gets fanned out, and one route is chosen |
+| `prior-decision-is-reused` | A decision already on record is reused, not re-derived, while its reversal conditions hold |
+| `reversed-decision-reopens` | The same log with a reversal condition now true: the decision reopens from the recorded candidates, not from scratch |
+| `promotion-is-offered-not-taken` | A generic addition is offered to the kit with its cost; a repo-specific one stays local |
+
+`obvious-fix-stays-cheap` is the case the kit can lose: its pass condition is Δ near zero,
+because every always-on token the kit adds is paid on trivial prompts too. A suite made
+only of cases the kit is designed to win would never report that.
+
+The suite spends plan usage — 7 cases × 3 runs × 2 arms is 42 agent runs — so it is run by
+hand, not in CI, which would need an `ANTHROPIC_API_KEY` a subscription doesn't provide.
+`python -m pytest tests/test_evals.py` checks the suite's schema for free.
+[`plugins/kit/evals/README.md`](plugins/kit/evals/README.md) covers the dials and how to
+read a number you can trust; the reasoning is in
+[docs/decisions/](docs/decisions/2026-10-29-measure-the-kit-with-plugin-evals.md).
+
 ## Develop
 
 ```bash
 pip install pytest ruff
-python -m pytest tests          # hook tests (temp git repos, no network)
+python -m pytest tests          # hook tests + eval-suite schema (no network, no model calls)
 claude plugin validate .        # marketplace + both plugins
 claude --plugin-dir ./plugins/kit   # try local edits without pushing
 ```
 
-CI runs both on every PR (`.github/workflows/validate.yml`).
+CI runs both on every PR (`.github/workflows/validate.yml`). It does not run the eval
+suite: that needs model credentials in the environment, and a Claude subscription
+isn't one.
 
 ## Background
 
