@@ -17,3 +17,6 @@ needed:
   `raw_events` partition layout and says which partition is behind.
 
 We run four other repos off the same shared plugin. Close this out — what's the wrap-up?
+
+Neither repo is checked out where you are, so there is nothing to go and read. The
+wrap-up itself is what I'm after.

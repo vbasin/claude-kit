@@ -139,6 +139,34 @@ def test_every_case_scores_something_against_the_baseline(case: Path) -> None:
     )
 
 
+PROSE_TARGETS = {"last_message", "trace", "files", ""}
+
+
+@pytest.mark.parametrize("case", cases(), ids=lambda p: p.name)
+def test_regex_graders_match_literals_not_concepts(case: Path) -> None:
+    """A regex cannot tell a recommendation from a refusal.
+
+    The first real run caught two graders doing exactly that: `picks-fan-out` passed a
+    reply that said "Skip subagents, /batch and worktrees", because the words were
+    there, and `names-the-standing-cost` failed "all four other repos" because they
+    weren't. Both patterns were alternations of concept words standing in for a
+    judgement. Alternation is the signature, so it is what this blocks: a regex grader
+    on prose matches an identifier or a literal string, and anything that needs reading
+    comprehension belongs in an `llm` rubric.
+    """
+    for path in graders(case):
+        meta = frontmatter(path)
+        if meta.get("type") != "regex":
+            continue
+        if meta.get("target", "last_message") not in PROSE_TARGETS:
+            continue
+        assert "|" not in meta.get("pattern", ""), (
+            f"{case.name}/{path.name}: this pattern is a list of concept words, which "
+            "passes when the reply mentions them to reject them. Move the claim into an "
+            "llm grader, or narrow the pattern to one literal."
+        )
+
+
 def test_the_suite_covers_what_the_kit_claims() -> None:
     """Each claim the kit makes in writing needs a case that could falsify it."""
     names = {c.name for c in cases()}
@@ -150,5 +178,6 @@ def test_the_suite_covers_what_the_kit_claims() -> None:
         "a decision already on record is reused, not re-derived": "prior-decision-is-reused",
         "a decision whose reversal condition fired is reopened from the old field": "reversed-decision-reopens",
         "a generic addition is offered to the kit, never promoted quietly": "promotion-is-offered-not-taken",
+        "a delivered change fixes the cause, not only the line pointed at": "delivery-applies-the-floor",
     }.items():
         assert case in names, f"no case covers: {claim}"
