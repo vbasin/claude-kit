@@ -178,5 +178,6 @@ def test_the_suite_covers_what_the_kit_claims() -> None:
         "a decision already on record is reused, not re-derived": "prior-decision-is-reused",
         "a decision whose reversal condition fired is reopened from the old field": "reversed-decision-reopens",
         "a generic addition is offered to the kit, never promoted quietly": "promotion-is-offered-not-taken",
+        "a delivered change fixes the cause, not only the line pointed at": "delivery-applies-the-floor",
     }.items():
         assert case in names, f"no case covers: {claim}"
