@@ -30,6 +30,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from gates import run_gates
 from kit_common import (
     changed_since,
     dirty_files,
@@ -202,23 +203,27 @@ def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str]) ->
 
 def verify(root: Path, cfg: Dict[str, Any], changed: List[str]) -> Tuple[List[str], List[str], int]:
     """Return (failure sections, tests run, tests capped)."""
+    gate_failures, _ = run_gates(root, cfg, changed)
     python = resolve_python(cfg, root)
     changed_py = [f for f in changed if f.endswith(".py")]
     if not changed_py:
-        return [], [], 0
+        if changed and not cfg.get("verification", {}).get("enabled"):
+            return ["No configured verification gates cover these non-Python files."], [], 0
+        return gate_failures, [], 0
     if python is None:
         if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")):
-            return [], [], 0
-        return [f"No interpreter from `python` in .claude/kit.json exists here ({cfg.get('python') or ['python3']}), "
+            return gate_failures, [], 0
+        return gate_failures + [f"No interpreter from `python` in .claude/kit.json exists here "
+                f"({cfg.get('python') or ['python3']}), "
                 "so lint and tests did not run. Create it, add a fallback such as \"python3\", or "
                 "disable lint and tests."], [], 0
-    failures: List[str] = []
+    failures: List[str] = list(gate_failures)
     lint_out = lint_files(root, python, cfg, [f for f in changed_py if (root / f).is_file()])
     if lint_out:
         failures.append(f"Lint ({' '.join(cfg['lint'].get('args', []))}):\n{lint_out}")
     tests: List[str] = []
     capped = 0
-    if cfg.get("tests", {}).get("enabled"):
+    if cfg.get("tests", {}).get("enabled") and not cfg.get("verification", {}).get("enabled"):
         tcfg = cfg.get("tests", {})
         tests, capped = find_tests(root, changed_py, tcfg)
         # Source changes can affect tests through indirect imports. Run all discovered
@@ -233,7 +238,8 @@ def verify(root: Path, cfg: Dict[str, Any], changed: List[str]) -> Tuple[List[st
             capped = len(all_tests) - len(tests)
     if capped:
         failures.append(f"Verification incomplete: {capped} test files were omitted by exclusions or tests.max_files.")
-    test_out = run_tests(root, python, cfg, tests)
+    test_out = (run_tests(root, python, cfg, tests)
+                if not cfg.get("verification", {}).get("enabled") else None)
     if test_out:
         failures.append(f"Tests (pytest {' '.join(tests)}):\n{test_out}")
     return failures, tests, capped
@@ -259,11 +265,11 @@ def hook_main() -> int:
         emit({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext":
               f"Verification unavailable: {exc}. Correct the configuration or report the task unverified."}})
         return 0
-    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")):
+    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")
+            or cfg.get("verification", {}).get("enabled")):
         return 0
     state = load_state(session_id)
     changed = changed_since(root, state.get("baseline", {}), state.get("edited", []))
-    changed = [f for f in changed if f.endswith(".py")]
     if not changed:
         return 0
     digest = _digest(root, changed)
@@ -312,12 +318,14 @@ def manual_main(files: List[str]) -> int:
     print(f"kit verify: {len(py)} changed Python file(s); tests run: {' '.join(tests) or 'none'}")
     if capped:
         print(f"  ({capped} more related test files not run; cap is tests.max_files)")
-    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")):
-        print("  lint and tests are disabled: add .claude/kit.json to this repo to enable them")
+    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")
+            or cfg.get("verification", {}).get("enabled")):
+        print("  no checks are enabled: add .claude/kit.json to this repo to enable them")
     if failures:
         print("\n\n".join(failures))
         return 1
-    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")):
+    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")
+            or cfg.get("verification", {}).get("enabled")):
         print("kit verify: SKIPPED (no checks enabled)")
         return 2
     print("kit verify: OK")

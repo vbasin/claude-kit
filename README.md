@@ -138,3 +138,23 @@ isn't one.
 ## Background
 
 The research and plan behind this setup are in [docs/PLAN.md](docs/PLAN.md).
+
+## Language-neutral verification gates
+
+For projects with a trusted, scoped test target, enable `verification` in `.claude/kit.json`:
+
+```json
+"verification": {
+  "enabled": true,
+  "gates": [
+    {"name": "web-tests", "paths": ["web/**"], "argv": ["npm", "test", "--", "--run"], "timeout_s": 300},
+    {"name": "api-tests", "paths": ["api/**"], "argv": ["make", "test-api"], "timeout_s": 300}
+  ]
+}
+```
+
+Every changed path must match a gate. Commands run as argument arrays without a shell;
+`cwd` is optional and must remain within the repository. Gates replace automatic pytest
+selection when enabled; Python lint settings still apply. Gate coverage is a repo contract:
+include affected integration tests and shared configuration paths. Test commands execute
+with the user's privileges. The manual verifier and Stop hook use the same gate runner.

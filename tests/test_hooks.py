@@ -575,3 +575,38 @@ def test_changed_test_config_invalidates_prior_pass(repo: Path, data_dir: Path) 
     assert hook("stop_verify.py", base, data_dir) == {}
     set_config(repo, tests={"env": {"KIT_TEST": "bad"}})
     assert "test_env" in hook("stop_verify.py", base, data_dir)["hookSpecificOutput"]["additionalContext"]
+
+
+def test_language_neutral_gate_pass_fail_and_uncovered(repo: Path, data_dir: Path) -> None:
+    source = repo / "src/app.ts"
+    source.write_text("export const answer = 42;\n")
+    set_config(repo, lint={"enabled": False}, tests={"enabled": False}, verification={
+        "enabled": True, "gates": [{"name": "typescript", "paths": ["src/*.ts"],
+                                    "argv": [sys.executable, "-c", "import sys; sys.exit(0)"]}]})
+    result = manual(repo, "src/app.ts", data_dir=data_dir)
+    assert result.returncode == 0, result.stdout
+    set_config(repo, verification={"gates": [{"name": "typescript", "paths": ["src/*.ts"],
+                                               "argv": [sys.executable, "-c", "import sys; sys.exit(3)"]}]})
+    result = manual(repo, "src/app.ts", data_dir=data_dir)
+    assert result.returncode == 1 and "Gate typescript failed (exit 3)" in result.stdout
+    result = manual(repo, "README.md", data_dir=data_dir)
+    assert result.returncode == 1 and "No configured gate covers" in result.stdout
+
+
+def test_gate_command_does_not_use_shell_and_cannot_escape_repo(repo: Path, data_dir: Path) -> None:
+    (repo / "src/app.ts").write_text("x\n")
+    set_config(repo, lint={"enabled": False}, tests={"enabled": False}, verification={
+        "enabled": True, "gates": [{"name": "bad", "paths": ["src/*.ts"],
+                                    "argv": ["this-does-not-exist;touch", "marker"]}]})
+    result = manual(repo, "src/app.ts", data_dir=data_dir)
+    assert result.returncode == 1 and not (repo / "marker").exists()
+    set_config(repo, verification={"gates": [{"name": "bad", "paths": ["src/*.ts"],
+                                               "cwd": "..", "argv": [sys.executable, "-V"]}]})
+    result = manual(repo, "src/app.ts", data_dir=data_dir)
+    assert result.returncode == 1 and "unavailable" in result.stdout
+
+
+def test_non_python_change_without_gate_is_unverified(repo: Path, data_dir: Path) -> None:
+    (repo / "src/app.ts").write_text("x\n")
+    result = manual(repo, "src/app.ts", data_dir=data_dir)
+    assert result.returncode == 1 and "non-Python" in result.stdout

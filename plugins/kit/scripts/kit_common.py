@@ -93,9 +93,10 @@ def load_config(root: Optional[Path], strict: bool = False) -> Dict[str, Any]:
             raise ValueError(f"Invalid kit configuration: {exc}") from exc
         return DEFAULT_CONFIG
     if strict and (not isinstance(user, dict) or any(
-        k in user and not isinstance(user[k], dict) for k in ("lint", "tests", "guards", "routing")
+        k in user and not isinstance(user[k], dict) for k in ("lint", "tests", "guards", "routing", "verification")
     )):
-        raise ValueError("Invalid kit configuration: expected objects for lint, tests, guards and routing")
+        raise ValueError("Invalid kit configuration: expected objects for lint, tests, "
+                         "guards, routing and verification")
     return _merge(DEFAULT_CONFIG, user if isinstance(user, dict) else {})
 
 
