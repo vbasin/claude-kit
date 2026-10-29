@@ -1,9 +1,9 @@
 ---
 description: The same question asked twice, with the first answer on record and its reversal condition still false.
 tags: [design, retention]
-max_turns: 12
-timeout_seconds: 420
-allowed_tools: [Read, Glob, Grep, Skill, TodoWrite, AskUserQuestion]
+max_turns: 18
+timeout_seconds: 600
+allowed_tools: [Read, Glob, Grep, Skill, Agent, TodoWrite, AskUserQuestion]
 expected_outcome: Cites the recorded decision, confirms the reversal condition is still false, and proceeds with Redis — no fresh comparison of the three options.
 ---
 

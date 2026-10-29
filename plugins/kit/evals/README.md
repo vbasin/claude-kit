@@ -29,8 +29,12 @@ Two cases grant `Agent`, which is in the read-only set and so needs no `--allow-
 `kit:reviewer`'s job. Without it those cases would measure a version of the kit with its
 adversary removed — the part most likely to be carrying the Δ. They pay for it in turns
 and tokens, which is why their `max_turns` and `timeout_seconds` are higher than the
-rest. `obvious-fix-stays-cheap` withholds `Agent` on purpose: the whole claim there is
-that nothing gets escalated, and the run should not have the means to.
+rest. `prior-decision-is-reused` grants it for the same reason as the first two, inverted: if
+a run ignores the record and re-derives the choice, delegating to the critic is part of
+what that costs, and the trace grader should be able to see it happen.
+`obvious-fix-stays-cheap` and `promotion-is-offered-not-taken` withhold `Agent` on
+purpose — the first because its whole claim is that nothing gets escalated and the run
+should not have the means to, the second because writing a wrap-up delegates to nobody.
 
 ## What each case measures
 
