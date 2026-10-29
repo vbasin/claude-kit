@@ -1,5 +1,6 @@
 ---
 type: regex
 target: last_message
-pattern: 'Postgres'
+pattern: 'postgres'
+flags: i
 ---

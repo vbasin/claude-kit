@@ -1,5 +1,6 @@
 ---
 type: regex
 target: last_message
-pattern: 'Redis'
+pattern: 'redis'
+flags: i
 ---
