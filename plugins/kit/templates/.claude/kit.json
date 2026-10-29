@@ -23,6 +23,7 @@
   "routing": {
     "enabled": true,
     "note": "",
+    "decisions": ".claude/decisions",
     "gates": [
       { "paths": ["src/**"], "command": "make test" }
     ],

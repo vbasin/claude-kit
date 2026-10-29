@@ -1,8 +1,8 @@
 """SessionStart: put the routing policy in front of Claude so one prompt is enough.
 
-Without this, choosing between one session, parallel subagents, `/batch` and a workflow
-is left to the user. This prints that decision back onto Claude at the start of every
-session, and points at the `deliver` skill which holds the actual protocol.
+Without this, choosing the approach and the scale is left to the user. This prints both
+decisions back onto Claude at the start of every session, and points at the `deliver`
+skill, which holds the protocol and hands the design stage to `deliberate`.
 
 Deliberate stdout: SessionStart is one of the events where Claude Code adds a hook's
 output to the session as context. Keep it short — it is paid for in every session of
@@ -22,10 +22,11 @@ from kit_common import emit, load_config, read_input, repo_root
 
 POLICY = (
     "kit routing policy. For any request beyond one obvious edit — a feature, a bug, an "
-    "audit, a migration or a sweep — start with the `deliver` skill. It sizes the work, "
-    "picks the route (this session, parallel subagents, `/batch`, or an `ultracode:` "
-    "workflow), then verifies and reviews before you finish. Choose the route yourself "
-    "and say which you chose; do not ask the user which tool to use."
+    "audit, a migration or a sweep — start with the `deliver` skill. It settles the "
+    "approach before any code (rival designs, attacked and revised until one wins), sizes "
+    "the work, picks the route (this session, parallel subagents, `/batch`, or an "
+    "`ultracode:` workflow), then verifies and reviews. Choose the approach and the route "
+    "yourself and say what you chose; the design is never the user's to supply."
 )
 NOTE_LIMIT = 400
 

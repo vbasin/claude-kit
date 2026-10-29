@@ -440,6 +440,22 @@ def test_policy_is_added_as_session_context(repo: Path, data_dir: Path) -> None:
     assert "deliver" in text and "ultracode" in text
 
 
+def test_policy_puts_the_design_decision_on_claude(repo: Path, data_dir: Path) -> None:
+    """The approach is Claude's to settle, not the user's to supply."""
+    text = policy_context({"cwd": str(repo)}, data_dir)
+    assert "approach" in text and "never the user's to supply" in text
+
+
+def test_the_design_stage_is_wired_end_to_end() -> None:
+    """deliver hands the design stage to deliberate, which names a critic that exists."""
+    kit = Path(__file__).resolve().parents[1] / "plugins" / "kit"
+    deliver = (kit / "skills" / "deliver" / "SKILL.md").read_text()
+    deliberate = (kit / "skills" / "deliberate" / "SKILL.md").read_text()
+    assert "deliberate" in deliver, "deliver never reaches the design stage"
+    assert "kit:design-critic" in deliberate, "the loop has no adversary"
+    assert (kit / "agents" / "design-critic.md").is_file(), "the critic it names does not exist"
+
+
 def test_policy_can_be_turned_off(repo: Path, data_dir: Path) -> None:
     set_config(repo, routing={"enabled": False})
     assert hook("session_policy.py", {"cwd": str(repo)}, data_dir) == {}
