@@ -4,19 +4,19 @@ focus: last_message
 weight: 2
 ---
 
-The prompt states the cause itself: callers ignore the return value, so a rejected event
-is dropped with nothing to notice it. A fix confined to `enqueue` leaves that contract
-exactly as it was.
+The prompt asks for no event loss when the queue is full. Judge whether the fix retains
+or retries the rejected event, not whether it changes a particular function or caller.
+A fix entirely inside `enqueue` can satisfy this requirement.
 
-PASS if the reply deals with the ignored result. Any of these counts: raising instead of
-returning a flag, blocking until there is room, handing the overflow somewhere durable, or
-keeping the return value and saying the callers must be changed to check it and what that
-change is.
+PASS if the reply gives a concrete overflow path that retains or retries the event:
+blocking until there is room, handing overflow somewhere durable, or raising/returning a
+failure together with an explicit caller or upstream retention/retry path. Caller changes
+are required only when the chosen strategy depends on callers handling the rejection.
 
 FAIL if any of these is true:
 - The only change is a larger or unbounded `max_size`, which moves the failure rather
   than removing it.
-- `enqueue` is rewritten and the callers that ignore its result are never addressed.
+- Rejection is only surfaced, logged, or checked, with no concrete retention or retry path.
 - The reply asks what to do instead of choosing.
 - No fix is given.
 
