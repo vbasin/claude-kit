@@ -4,7 +4,7 @@ One shared source for the Claude Code setup used across my repos (ML_analytics, 
 
 | Plugin | What it gives every repo that enables it |
 |---|---|
-| `kit` | One prompt is enough: `/kit:deliver` sizes a task and routes it, and a SessionStart hook tells Claude to use it. Plus hooks that lint and test what Claude changed before it can finish, guards on destructive commands, `reviewer` / `test-runner` / `security-reviewer` subagents, and the skills `/kit:verify`, `/kit:scale-out`, `/kit:spec`, `/kit:fix-issue`, `/kit:adopt` |
+| `kit` | One prompt is enough: `/kit:deliver` settles the approach, sizes the task and routes it, and a SessionStart hook tells Claude to use it. `/kit:deliberate` runs the design stage against `design-critic`. Plus hooks that lint and test what Claude changed before it can finish, guards on destructive commands, `reviewer` / `test-runner` / `security-reviewer` subagents, and the skills `/kit:verify`, `/kit:scale-out`, `/kit:spec`, `/kit:fix-issue`, `/kit:adopt` |
 | `quant` | `causality-reviewer` (look-ahead leakage) and `query-reviewer` (SQL/TimescaleDB) subagents |
 
 ## What lives where
@@ -52,18 +52,23 @@ To make updates automatic, open `/plugin` → **Marketplaces** → `vtech-kit` �
 
 The point of the setup is that the user describes the outcome and Claude works out the scale. Two pieces do that:
 
-- **`/kit:deliver`** holds the protocol: frame the goal and its done-check, size the work, choose between this session, parallel subagents, `/batch` and an `ultracode:` workflow, brief the workers, run the repo's gates, run the matching reviewers, then report. It also names the harness gaps it hits (a missing scope, a rule worth writing) instead of silently widening the job.
-- **`session_policy.py`** prints that instruction into every session, so Claude reaches for `deliver` on its own rather than waiting to be told which tool to use.
+- **`/kit:deliver`** holds the protocol: frame the goal and its done-check, settle the approach, size the work, choose between this session, parallel subagents, `/batch` and an `ultracode:` workflow, brief the workers, run the repo's gates, run the matching reviewers, then report. It also names the harness gaps it hits (a missing scope, a rule worth writing) instead of silently widening the job.
+- **`/kit:deliberate`** is the design stage `deliver` hands off to whenever the shape of the work is not obvious. It looks up what already exists, writes the criteria *before* any candidate so the first idea can't be rationalised, generates two to four designs that differ in structure rather than detail, has `kit:design-critic` attack them from a fresh context, revises, and attacks again until no surviving objection changes the pick or three rounds are up. Then it records the decision, the rejected options and what would reverse it.
+- **`kit:design-critic`** is that adversary. It checks the *field* and the *criteria* before the candidates, because a missing candidate matters more than a flaw in a present one, and it has to pick one and name the fact that would change its mind.
+- **`session_policy.py`** prints that instruction into every session, so Claude reaches for `deliver` on its own. The design is never the user's to supply: requirements are theirs, the approach is Claude's.
 
 A repo points `deliver` at its own gates and reviewers in `.claude/kit.json`:
 
 ```json
 "routing": {
   "note": "Work happens on dated branches; AGENTS.md governs.",
+  "decisions": "docs/decisions",
   "gates": [ { "paths": ["src/acquisition/**"], "command": "make test-acquisition" } ],
   "reviewers": [ { "paths": ["src/features/**", "src/labels/**"], "agent": "quant:causality-reviewer" } ]
 }
 ```
+
+`decisions` is where `deliberate` writes its decision logs. Unset, it falls back to the repo's own convention, then to `.claude/decisions/`.
 
 `"routing": { "enabled": false }` turns the session policy off for a repo that doesn't want it.
 
@@ -74,7 +79,7 @@ A repo points `deliver` at its own gates and reviewers in `.claude/kit.json`:
 | Hook | Script | Does |
 |---|---|---|
 | SessionStart | `session_start.py` | Records which files were already dirty, so only this session's changes are checked |
-| SessionStart | `session_policy.py` | Prints the routing policy into the session, so one prompt reaches the right scale of work |
+| SessionStart | `session_policy.py` | Prints the routing policy into the session, so one prompt reaches both the right approach and the right scale of work |
 | PreToolUse (Bash) | `bash_guard.py` | Asks before `DROP`/`TRUNCATE`/`DELETE` without `WHERE`/chunk operations, before full-suite pytest runs (opt-in), and before repo-specific patterns |
 | PostToolUse (Edit/Write) | `post_edit.py` | Remembers the edited file and lints it at once |
 | Stop | `stop_verify.py` | Lints the session's changed `.py` files and runs only the tests that cover them, as explicit paths. On failure it sends the output back so Claude keeps working. If Claude stops again with the same failure, it lets the stop through with a notice, so a pre-existing failure can't trap a session |

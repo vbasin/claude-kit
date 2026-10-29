@@ -1,8 +1,15 @@
 {
   "name": "kit",
   "displayName": "Kit",
-  "description": "Shared Claude Code workflow: session-scoped lint+test verification, guards for destructive commands, reviewer and test-runner subagents, and skills for specs, issue fixes and scaling out.",
-  "author": { "name": "vbasin" },
+  "description": "Shared Claude Code workflow: a design stage that generates rival approaches and has them attacked before any code, session-scoped lint+test verification, guards for destructive commands, reviewer and critic subagents, and skills for specs, issue fixes and scaling out.",
+  "author": {
+    "name": "vbasin"
+  },
   "repository": "https://github.com/vbasin/claude-kit",
-  "keywords": ["verification", "hooks", "review", "workflow"]
+  "keywords": [
+    "verification",
+    "hooks",
+    "review",
+    "workflow"
+  ]
 }
