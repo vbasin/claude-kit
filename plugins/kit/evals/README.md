@@ -46,7 +46,7 @@ should not have the means to, the second because writing a wrap-up delegates to 
 | `design-not-handed-back` | The design is Claude's to settle, and it settles it by comparing rivals against stated criteria | Positive: the deliberation loop is doing work a bare session doesn't |
 | `obvious-fix-stays-cheap` | The kit doesn't charge design ceremony for a one-line fix | **Near zero is the pass.** Strongly negative means the kit is making trivial work expensive |
 | `duplication-is-a-defect` | Duplication and dead config are reportable defects, named at their location | Positive: the standards floor in `deliver` and `reviewer` is landing |
-| `sweep-gets-fanned-out` | Independent mechanical work gets fanned out, and one route is chosen rather than offered | Positive: the routing table is being used, not just read |
+| `sweep-gets-fanned-out` | Independent work that can't be scripted gets fanned out, one route is chosen rather than offered, and the unit each worker gets is named | Positive: the routing table is being used, not just read |
 | `prior-decision-is-reused` | A decision already on record is reused rather than re-derived, while its reversal conditions hold | Positive: the loop reads what it wrote, so the same ground isn't re-covered |
 | `reversed-decision-reopens` | The same log, with a reversal condition now true: the decision is reopened, and the recorded candidates and objections are the starting set | Positive: a superseded decision is still most of the work, and the kit spends it |
 | `promotion-is-offered-not-taken` | A generic addition is offered to the shared kit with its cost, a repo-specific one stays local, and the move stays the user's | Positive: a discovery in one repo can reach the others |
@@ -61,7 +61,12 @@ Each case pairs a check on the **result** with a check on the **steps**, which i
 tells you whether the answer was right *and* whether the kit is what produced it.
 
 - `regex`, `tool_used` and `file_exists` graders are computed from the transcript and
-  cost nothing. Prefer them.
+  cost nothing. Prefer them — but a `regex` on prose only ever matches an **identifier or
+  a literal string**. A pattern that alternates concept words is standing in for a
+  judgement, and it cannot tell a recommendation from a refusal: the first real run had
+  one pass a reply that said "Skip subagents, `/batch` and worktrees" because the words
+  were present, and another fail "all four other repos" because they weren't.
+  `tests/test_evals.py` fails any regex grader on prose that contains `|`.
 - `llm` graders call a judge, so their rubrics are written as concrete PASS and FAIL
   conditions with formatting explicitly ruled out, because a judge that marks a correct
   answer wrong for its layout reads as a plugin regression.

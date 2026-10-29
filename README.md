@@ -105,7 +105,7 @@ claude plugin eval ./plugins/kit --ablation with-without
 | `design-not-handed-back` | The design is Claude's to settle, by comparing rivals against stated criteria |
 | `obvious-fix-stays-cheap` | The kit doesn't charge design ceremony for a one-line fix |
 | `duplication-is-a-defect` | Duplication and dead config are reportable defects, named at their location |
-| `sweep-gets-fanned-out` | Independent mechanical work gets fanned out, and one route is chosen |
+| `sweep-gets-fanned-out` | Independent work that can't be scripted gets fanned out, and one route is chosen |
 | `prior-decision-is-reused` | A decision already on record is reused, not re-derived, while its reversal conditions hold |
 | `reversed-decision-reopens` | The same log with a reversal condition now true: the decision reopens from the recorded candidates, not from scratch |
 | `promotion-is-offered-not-taken` | A generic addition is offered to the kit with its cost; a repo-specific one stays local |
