@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+
+# plugin eval writes a timestamped directory per run
+plugins/kit/evals/results/
