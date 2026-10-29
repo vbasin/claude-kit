@@ -116,6 +116,10 @@ def test_graders_load(case: Path) -> None:
         if kind == "regex":
             assert meta.get("pattern"), f"{path.name}: regex grader needs a pattern"
             re.compile(meta["pattern"])
+        if meta.get("input_match"):
+            # input_match is a regex too, and an unparseable one survives every check
+            # above: its type is known and its field name belongs to that type.
+            re.compile(meta["input_match"])
         if kind == "llm":
             body = path.read_text(encoding="utf-8").split("---\n", 2)[2]
             assert "PASS" in body and "FAIL" in body, (

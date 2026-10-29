@@ -1,9 +1,9 @@
 ---
 description: A diff whose only real problems are duplication and dead config. Does the review report them as defects?
 tags: [review, standards]
-max_turns: 10
-timeout_seconds: 360
-allowed_tools: [Read, Glob, Grep, Skill, TodoWrite]
+max_turns: 16
+timeout_seconds: 540
+allowed_tools: [Read, Glob, Grep, Skill, Agent, TodoWrite]
 expected_outcome: The duplicated normalisation body reported as a defect, naming both functions, plus the unread config key.
 ---
 
