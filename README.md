@@ -92,7 +92,7 @@ Tests are picked per changed file, deleted files included: its own test file, `t
 
 ## Does the kit help?
 
-`plugins/kit/evals/` is a six-case `claude plugin eval` suite. Every case runs with the
+`plugins/kit/evals/` is a seven-case `claude plugin eval` suite. Every case runs with the
 plugin and again with no plugin at all, so the number it reports is **Δ** — what the kit
 contributed, not what the model would have done anyway.
 
@@ -107,13 +107,14 @@ claude plugin eval ./plugins/kit --ablation with-without
 | `duplication-is-a-defect` | Duplication and dead config are reportable defects, named at their location |
 | `sweep-gets-fanned-out` | Independent mechanical work gets fanned out, and one route is chosen |
 | `prior-decision-is-reused` | A decision already on record is reused, not re-derived, while its reversal conditions hold |
+| `reversed-decision-reopens` | The same log with a reversal condition now true: the decision reopens from the recorded candidates, not from scratch |
 | `promotion-is-offered-not-taken` | A generic addition is offered to the kit with its cost; a repo-specific one stays local |
 
 `obvious-fix-stays-cheap` is the case the kit can lose: its pass condition is Δ near zero,
 because every always-on token the kit adds is paid on trivial prompts too. A suite made
 only of cases the kit is designed to win would never report that.
 
-The suite spends plan usage — 6 cases × 3 runs × 2 arms is 36 agent runs — so it is run by
+The suite spends plan usage — 7 cases × 3 runs × 2 arms is 42 agent runs — so it is run by
 hand, not in CI, which would need an `ANTHROPIC_API_KEY` a subscription doesn't provide.
 `python -m pytest tests/test_evals.py` checks the suite's schema for free.
 [`plugins/kit/evals/README.md`](plugins/kit/evals/README.md) covers the dials and how to

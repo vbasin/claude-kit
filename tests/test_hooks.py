@@ -466,6 +466,13 @@ def test_a_decision_is_written_to_be_found_again() -> None:
     assert "routing.decisions" in record, "step 8 writes somewhere step 2 does not read"
     assert "Supersedes" in record, "a log cannot replace an earlier one"
     assert "What would change this decision" in record, "no reversal condition to check"
+    # Reading the log is only half of it. A log whose condition has fired has to reopen
+    # the decision from the field it already holds, or the next run pays for the
+    # comparison twice. `evals/reversed-decision-reopens` is what scores that happening.
+    assert "Now true" in look_up, "step 2 only handles a decision that still stands"
+    assert "starting set" in look_up, (
+        "a reopened decision has to start from the recorded candidates, not from nothing"
+    )
     config = json.loads((kit / "templates" / ".claude" / "kit.json").read_text())
     assert "decisions" in config["routing"], "the template never points anywhere"
 

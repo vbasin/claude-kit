@@ -1,6 +1,6 @@
 # Does the kit actually help?
 
-Six cases, each one a prompt the kit claims to handle better than a bare session. Every
+Seven cases, each one a prompt the kit claims to handle better than a bare session. Every
 case runs with the plugin and again with no plugin at all, and the number that matters is
 **Δ** — the with-arm score minus the without-arm score. A case that scores 1.0 in both
 arms is not evidence for the kit; it is evidence the model did it anyway.
@@ -18,7 +18,7 @@ claude plugin eval ./plugins/kit --ablation none --runs 2 --case obvious-fix-sta
 ```
 
 The suite uses your normal Claude Code credentials and counts against your plan's usage,
-so a full pass is 6 cases × 3 runs × 2 arms = **36 agent runs**, plus three short judge
+so a full pass is 7 cases × 3 runs × 2 arms = **42 agent runs**, plus three short judge
 calls per `llm` grader per run. `--runs 2` and `--case <glob>` are the two dials.
 Everything here is read-only: no `--allow-tools`, no `--scaffold`, no fixtures on disk —
 each prompt carries whatever the task needs, so the suite never touches a real repo.
@@ -32,6 +32,9 @@ and tokens, which is why their `max_turns` and `timeout_seconds` are higher than
 rest. `prior-decision-is-reused` grants it for the same reason as the first two, inverted: if
 a run ignores the record and re-derives the choice, delegating to the critic is part of
 what that costs, and the trace grader should be able to see it happen.
+`reversed-decision-reopens` grants it because there the deliberation is the *correct*
+behaviour — the condition fired, the choice is open — so withholding the critic would
+measure a reopening the kit never intended.
 `obvious-fix-stays-cheap` and `promotion-is-offered-not-taken` withhold `Agent` on
 purpose — the first because its whole claim is that nothing gets escalated and the run
 should not have the means to, the second because writing a wrap-up delegates to nobody.
@@ -45,6 +48,7 @@ should not have the means to, the second because writing a wrap-up delegates to 
 | `duplication-is-a-defect` | Duplication and dead config are reportable defects, named at their location | Positive: the standards floor in `deliver` and `reviewer` is landing |
 | `sweep-gets-fanned-out` | Independent mechanical work gets fanned out, and one route is chosen rather than offered | Positive: the routing table is being used, not just read |
 | `prior-decision-is-reused` | A decision already on record is reused rather than re-derived, while its reversal conditions hold | Positive: the loop reads what it wrote, so the same ground isn't re-covered |
+| `reversed-decision-reopens` | The same log, with a reversal condition now true: the decision is reopened, and the recorded candidates and objections are the starting set | Positive: a superseded decision is still most of the work, and the kit spends it |
 | `promotion-is-offered-not-taken` | A generic addition is offered to the shared kit with its cost, a repo-specific one stays local, and the move stays the user's | Positive: a discovery in one repo can reach the others |
 
 `obvious-fix-stays-cheap` is the one that can condemn the kit rather than praise it. Every
@@ -61,10 +65,14 @@ tells you whether the answer was right *and* whether the kit is what produced it
 - `llm` graders call a judge, so their rubrics are written as concrete PASS and FAIL
   conditions with formatting explicitly ruled out, because a judge that marks a correct
   answer wrong for its layout reads as a plugin regression.
-- One grader reads the whole session rather than the final message
-  (`no-fresh-derivation.md`, `focus: trace`). A reply can cite a recorded decision
-  correctly *after* re-deriving it from scratch, and a grader on the last message cannot
-  tell the difference — which would leave the actual regression unmeasured.
+- Three graders read the whole session rather than the final message (`focus: trace`).
+  Every claim about work that should *not* have happened needs one, because the final
+  message is where the evidence gets tidied away: a reply can cite a recorded decision
+  correctly *after* re-deriving it from scratch (`no-fresh-derivation.md`), reopen one
+  while rebuilding the field from nothing (`reopens-from-the-old-set.md`), or run the
+  whole design stage in its own turns and then answer a typo with one line
+  (`no-inline-ceremony.md`). A grader on the last message cannot tell any of those from
+  the real thing, which would leave the regression unmeasured.
 - `tool_used` on `Skill` can never pass without the plugin, so Claude Code excludes it
   from the score in both arms and reports it as an indicator. `deliberate-fired.md` is
   one of those: it tells you the skill ran, it does not earn points.

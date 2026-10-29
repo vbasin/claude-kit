@@ -148,6 +148,7 @@ def test_the_suite_covers_what_the_kit_claims() -> None:
         "duplication is a reportable defect": "duplication-is-a-defect",
         "independent work gets fanned out": "sweep-gets-fanned-out",
         "a decision already on record is reused, not re-derived": "prior-decision-is-reused",
+        "a decision whose reversal condition fired is reopened from the old field": "reversed-decision-reopens",
         "a generic addition is offered to the kit, never promoted quietly": "promotion-is-offered-not-taken",
     }.items():
         assert case in names, f"no case covers: {claim}"
