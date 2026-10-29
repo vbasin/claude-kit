@@ -1,9 +1,9 @@
 ---
 description: An ambiguous design ask with no obvious answer. Does Claude settle it, or hand it back?
 tags: [design, ownership]
-max_turns: 14
-timeout_seconds: 420
-allowed_tools: [Read, Glob, Grep, Skill, TodoWrite, AskUserQuestion]
+max_turns: 20
+timeout_seconds: 600
+allowed_tools: [Read, Glob, Grep, Skill, Agent, TodoWrite, AskUserQuestion]
 expected_outcome: Two or more structurally different designs, criteria stated, one chosen, and the condition that would reverse it.
 ---
 

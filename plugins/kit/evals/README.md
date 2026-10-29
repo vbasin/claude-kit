@@ -23,6 +23,15 @@ calls per `llm` grader per run. `--runs 2` and `--case <glob>` are the two dials
 Everything here is read-only: no `--allow-tools`, no `--scaffold`, no fixtures on disk —
 each prompt carries whatever the task needs, so the suite never touches a real repo.
 
+Two cases grant `Agent`, which is in the read-only set and so needs no `--allow-tools`:
+`design-not-handed-back`, because `deliberate` step 5 sends the candidates to
+`kit:design-critic`, and `duplication-is-a-defect`, because the review it asks for is
+`kit:reviewer`'s job. Without it those cases would measure a version of the kit with its
+adversary removed — the part most likely to be carrying the Δ. They pay for it in turns
+and tokens, which is why their `max_turns` and `timeout_seconds` are higher than the
+rest. `obvious-fix-stays-cheap` withholds `Agent` on purpose: the whole claim there is
+that nothing gets escalated, and the run should not have the means to.
+
 ## What each case measures
 
 | Case | The claim it can falsify | Read Δ as |
