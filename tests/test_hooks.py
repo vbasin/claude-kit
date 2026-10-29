@@ -485,7 +485,7 @@ def test_a_generic_addition_is_offered_to_the_kit() -> None:
                / "deliver" / "SKILL.md").read_text()
     harness = deliver.split("## Working out the harness as you go", 1)[1]
     assert "belongs in the kit" in harness, "nothing promotes a generic addition"
-    assert "user's call" in harness, "promotion has to stay the user's decision"
+    assert "after evaluation" in harness, "promotion requires evaluation"
 
 
 def test_policy_can_be_turned_off(repo: Path, data_dir: Path) -> None:
@@ -610,6 +610,7 @@ def test_non_python_change_without_gate_is_unverified(repo: Path, data_dir: Path
     (repo / "src/app.ts").write_text("x\n")
     result = manual(repo, "src/app.ts", data_dir=data_dir)
     assert result.returncode == 1 and "non-Python" in result.stdout
+
 
 def test_mixed_language_change_without_gate_is_unverified(repo: Path, data_dir: Path) -> None:
     (repo / "src/app.ts").write_text("x\n")
