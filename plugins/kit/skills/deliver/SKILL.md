@@ -71,10 +71,16 @@ Never change the session's model or effort yourself. If the task needs a differe
 
 1. Run the gates for every area touched — the `routing.gates` entries whose globs match, or the repo's scoped targets. Never the full suite unless the repo says to.
 2. `/kit:verify` (or let the Stop hook do it) lints and runs the covering tests for what changed.
-3. Run `kit:reviewer` on any non-trivial diff, plus every `routing.reviewers` agent whose globs match the changed files. Run them in parallel, in one message.
-4. Run `/simplify` when the change touched code that already existed, or added more than a
-   few files. The reviewers report duplication; `/simplify` is what removes it.
+3. Run `/simplify` when the change touched code that already existed, or added more than a
+   few files. Do it before the reviewers, so they judge the code that will actually ship
+   rather than a draft of it.
+4. Run `kit:reviewer` on any non-trivial diff, plus every `routing.reviewers` agent whose globs match the changed files. Run them in parallel, in one message.
 5. Act on findings that affect correctness, safety, testability or duplication. Say which ones you skipped and why — acting on every nitpick is its own failure.
+6. **Any edit you made in steps 3 to 5 puts the diff back where it started.** Before you
+   report, re-run the gates whose globs match what changed and `/kit:verify`. Re-run a
+   reviewer only when the fix touched what it flagged, or when a newly touched path brings
+   a `routing.reviewers` glob into scope. What you report as verified has to be the diff
+   you are delivering, not the one you checked two edits ago.
 
 A test that fails for a reason your change did not introduce stays failing: say so, do not fix it in passing, and never skip or delete a test to get green.
 
