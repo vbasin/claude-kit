@@ -218,6 +218,10 @@ def verify(root: Path, cfg: Dict[str, Any], changed: List[str]) -> Tuple[List[st
                 "so lint and tests did not run. Create it, add a fallback such as \"python3\", or "
                 "disable lint and tests."], [], 0
     failures: List[str] = list(gate_failures)
+    if not cfg.get("verification", {}).get("enabled"):
+        non_python = [f for f in changed if not f.endswith(".py")]
+        if non_python:
+            failures.append("No configured verification gates cover: " + ", ".join(non_python))
     lint_out = lint_files(root, python, cfg, [f for f in changed_py if (root / f).is_file()])
     if lint_out:
         failures.append(f"Lint ({' '.join(cfg['lint'].get('args', []))}):\n{lint_out}")

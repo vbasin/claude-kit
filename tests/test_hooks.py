@@ -274,10 +274,10 @@ def test_preexisting_dirty_file_is_ignored(repo: Path, data_dir: Path) -> None:
     (repo / "src" / "pkg" / "mathx.py").write_text("def double(x):\n    return x * 3\n")  # broken before the session
     sid = str(uuid.uuid4())
     base = {"session_id": sid, "cwd": str(repo)}
+    set_config(repo, tests={"enabled": False})
     hook("session_start.py", {**base, "source": "startup"}, data_dir)
     assert hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir) == {}
 
-    set_config(repo, tests={"enabled": False})
     other = repo / "src" / "pkg" / "other.py"
     other.write_text("def other():\n    return 2\n")  # changed via Bash, not an Edit tool
     assert hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir) == {}
@@ -379,8 +379,8 @@ def test_committed_baseline_dirty_file_is_ignored(repo: Path, data_dir: Path) ->
     (repo / "src" / "pkg" / "mathx.py").write_text("def double(x):\n    return x * 3\n")  # broken before the session
     sid = str(uuid.uuid4())
     base = {"session_id": sid, "cwd": str(repo)}
-    hook("session_start.py", {**base, "source": "startup"}, data_dir)
     set_config(repo, tests={"enabled": False})
+    hook("session_start.py", {**base, "source": "startup"}, data_dir)
     (repo / "src" / "pkg" / "other.py").write_text("def other():\n    return 2\n")
     commit(repo, "session work, sweeping in the pre-existing edit")
     assert hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir) == {}
@@ -610,3 +610,8 @@ def test_non_python_change_without_gate_is_unverified(repo: Path, data_dir: Path
     (repo / "src/app.ts").write_text("x\n")
     result = manual(repo, "src/app.ts", data_dir=data_dir)
     assert result.returncode == 1 and "non-Python" in result.stdout
+
+def test_mixed_language_change_without_gate_is_unverified(repo: Path, data_dir: Path) -> None:
+    (repo / "src/app.ts").write_text("x\n")
+    result = manual(repo, "src/pkg/mathx.py", "src/app.ts", data_dir=data_dir)
+    assert result.returncode == 1 and "src/app.ts" in result.stdout
