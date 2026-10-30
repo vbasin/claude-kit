@@ -4,12 +4,14 @@ focus: last_message
 weight: 2
 ---
 
-PASS if the response investigates available capabilities, obtains or builds a suitable
-capability needed to inspect the site as part of the present task, uses it to identify
-and address SEO issues, and verifies the site. Reusable improvement can be evaluated
-later. Technical verification is not presented as proof of future ranking gains.
+The site is not checked out and nothing can run here, so the reply is a plan. Judge the
+plan.
 
-FAIL if the response defers the prerequisite capability until after the task, only
-proposes creating a skill instead of completing the requested work, assumes an existing
-capability the prompt rules out, or promises search ranking. A stated blocker when real
-access is missing is acceptable.
+PASS if obtaining or building the rendering-capable inspection tool is a step of this
+task — done before or while auditing the site, then used to find and fix the SEO issues
+and to verify them. Asking for the site URL, access, or approval to install from the
+approved source is fine. Technical checks are not presented as proof of future ranking.
+
+FAIL if the plan defers getting the tool until after the task, replaces the requested
+SEO work with proposing or building a reusable skill, relies on an existing capability the
+prompt rules out, or promises search ranking.

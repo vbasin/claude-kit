@@ -4,7 +4,7 @@ tags: [task-first, capability]
 max_turns: 12
 timeout_seconds: 420
 allowed_tools: [Read, Glob, Grep, Skill, TodoWrite, AskUserQuestion]
-expected_outcome: Search and compare existing suitable tools, create or adapt a necessary missing capability, then use it to complete and verify the user's task.
+expected_outcome: The missing rendering-capable tool is obtained or built as a step of this task and used to audit, fix and verify the site; nothing is deferred to a later improvement cycle.
 ---
 
 Optimize a website's technical SEO. No installed tool or existing repository capability

@@ -9,7 +9,7 @@ request, and then evaluate whether the capability should be reusable.
 From the installed skill directory, save only non-sensitive summaries:
 
 ```bash
-python scripts/backlog.py add --task "SEO audit" --idea "Improve rendered-page audit" --evidence "Existing audit met current requirements"
+python scripts/backlog.py add --task "Release notes" --idea "Changelog extractor" --evidence "Wrote the same git log parsing twice"
 python scripts/backlog.py list
 ```
 

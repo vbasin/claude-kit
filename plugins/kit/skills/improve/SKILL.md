@@ -6,10 +6,9 @@ argument-hint: "<observed gap or failure>"
 
 Improve the kit for: $ARGUMENTS
 
-The user's task comes first. If the missing capability is essential to complete it,
-research, adapt or build the smallest useful capability now and finish the task. Otherwise,
-record the opportunity and wait until the requested work is complete and verified before
-performing the following optional improvement cycle.
+The user's task comes first: `${CLAUDE_PLUGIN_ROOT}/portable/kit-deliver/references/capabilities.md`
+says when a capability is built during the task and when it waits for this cycle, which
+runs only after the requested work is complete and verified, or when the user asks.
 
 1. Record the observed task and concrete failure or missing capability. Search the repo's
    existing skills, tools, decision records and validated local candidates before building.
@@ -23,19 +22,25 @@ performing the following optional improvement cycle.
    shared plugin until evaluated. For a generic skill that is host-neutral, add an empty
    `skill/.kit-portable` marker before evaluation. Avoid host-specific commands and tool
    assumptions in the transferable skill. Do not install or execute untrusted downloaded code.
-4. Prepare or select a trusted independent suite outside the candidate. Each case supplies
+4. For executable helpers, prepare or select a trusted independent suite outside the
+   candidate. Each case supplies
    a small fixture and an argument-array check. The check receives `KIT_CANDIDATE_DIR`: it
    is empty for baseline and points to the skill for the candidate arm. Design a case that
    detects the desired improvement and at least one regression case that should remain
    successful. Include unseen tasks from more than one repository when practical.
-5. Run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/learning.py" evaluate CANDIDATE --suite SUITE`.
-   It runs each arm in a fresh copy, rejects regressions and requires at least one observed
-   improvement. A shell suite executes with your permissions; only use a suite you trust.
-   A passing synthetic suite is initial evidence, not proof that a skill improves LLM work.
-6. For a generic candidate, run `promote` with `--destination` pointing to an authorized
-   working checkout's `plugins/kit/skills`. Promotion reruns the suite and refuses to
-   overwrite existing skills. Add meaningful integration or behavior evals, review the
-   changes, and prepare a draft PR when the task and available permissions authorize it.
+5. Evaluate it the way `capabilities.md` step 4 says for what it is. Executable helpers:
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/learning.py" evaluate CANDIDATE --suite SUITE`
+   runs each arm in a fresh copy, rejects regressions and requires an observed
+   improvement; a shell suite executes with your permissions, so only use one you trust.
+   Instructions only: an exit code cannot observe a `SKILL.md`, so a check that passes
+   is a check that greps the file. Write a `plugins/kit/evals/` case and score it with
+   and without the candidate (`claude plugin eval <dir> --case <name> --runs 2`); a
+   positive Δ is the evidence, a zero Δ means the model already does it.
+6. For a generic candidate with executable helpers, run `promote` with `--destination`
+   pointing to an authorized working checkout's `plugins/kit/skills`; it reruns the suite
+   and refuses to overwrite existing skills. An instructions-only candidate is promoted by
+   copying it there together with the eval case that scored it. Either way, review the
+   changes and prepare a draft PR when the task and available permissions authorize it.
    A marked, validated skill in `plugins/kit/skills` is discoverable by the portable
    installer for Codex and Grok as well as by the Claude plugin. Repo-specific knowledge
    stays in the relevant repo. Do not alter a suite just to pass.

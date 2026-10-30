@@ -210,7 +210,7 @@ def test_guard_hook_output(repo: Path, data_dir: Path) -> None:
 def test_find_tests_by_name_and_import(repo: Path) -> None:
     tests, capped, _ = find_tests(repo, ["src/pkg/mathx.py"], {"test_dirs": ["tests"], "import_roots": ["src"]})
     assert tests == ["tests/test_mathx.py", "tests/test_uses_import.py"]
-    assert capped == 0
+    assert capped == []
 
 
 def test_unborn_baseline_tracks_new_commits_but_not_unchanged_existing_files(tmp_path: Path) -> None:
@@ -229,7 +229,7 @@ def test_find_tests_changed_test_file_and_cap(repo: Path) -> None:
         repo, ["tests/test_unrelated.py", "src/pkg/mathx.py"], {"test_dirs": ["tests"], "max_files": 2}
     )
     assert tests == ["tests/test_unrelated.py", "tests/test_mathx.py"]
-    assert capped == 1
+    assert capped == ["tests/test_uses_import.py"]
 
 
 def test_find_tests_multiline_import_and_patch_target(repo: Path) -> None:
@@ -380,7 +380,7 @@ def test_gate_mode_does_not_require_project_python(repo: Path, data_dir: Path) -
 
 def test_overlapping_test_dirs_run_each_file_once(repo: Path, data_dir: Path) -> None:
     (repo / "tests" / "sub").mkdir()
-    (repo / "tests" / "sub" / "test_once.py").write_text("def test_once(): pass\n")
+    (repo / "tests" / "sub" / "test_once.py").write_text("import pkg.mathx\ndef test_once(): pass\n")
     set_config(repo, lint={"enabled": False}, tests={"test_dirs": ["tests", "tests/sub"]})
     result = manual(repo, "src/pkg/mathx.py", data_dir=data_dir)
     assert result.returncode == 0, result.stdout
@@ -415,7 +415,10 @@ def test_stop_blocks_once_then_lets_go(repo: Path, data_dir: Path) -> None:
     first = hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir)
     feedback = first["hookSpecificOutput"]["additionalContext"]
     assert "tests/test_mathx.py" in feedback and "assert 6 == 4" in feedback
-    assert "tests/test_unrelated.py" in feedback
+    assert "tests/test_unrelated.py" not in feedback, "a test nothing links to the change ran"
+    assert hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir)[
+        "hookSpecificOutput"], "a new turn on the same failing diff still blocks once"
+
 
     again = hook("stop_verify.py", {**base, "stop_hook_active": True}, data_dir)
     assert "hookSpecificOutput" not in again and "still failing" in again["systemMessage"]
@@ -635,11 +638,26 @@ def test_a_decision_is_written_to_be_found_again() -> None:
 
 def test_a_generic_addition_is_offered_to_the_kit() -> None:
     """Without this, every repo rebuilds the same skill and the kit never learns."""
-    deliver = (Path(__file__).resolve().parents[1] / "plugins" / "kit" / "skills"
-               / "deliver" / "SKILL.md").read_text()
-    harness = deliver.split("## Working out the harness as you go", 1)[1]
-    assert "belongs in the kit" in harness, "nothing promotes a generic addition"
-    assert "after evaluation" in harness, "promotion requires evaluation"
+    kit = Path(__file__).resolve().parents[1] / "plugins" / "kit"
+    rule = (kit / "portable" / "kit-deliver" / "references" / "capabilities.md").read_text()
+    assert "belongs in the kit" in rule, "nothing promotes a generic addition"
+    assert "after evaluation" in rule, "promotion requires evaluation"
+    assert "positive Δ" in rule, "an instructions-only skill needs a scored eval case"
+
+
+def test_the_capability_rule_has_one_owner() -> None:
+    """Four files used to restate it, and the four copies had already drifted apart."""
+    kit = Path(__file__).resolve().parents[1] / "plugins" / "kit"
+    readers = [kit / "skills" / name / "SKILL.md" for name in ("deliver", "deliberate", "improve")]
+    readers.append(kit / "portable" / "kit-deliver" / "SKILL.md")
+    for path in readers:
+        text = path.read_text()
+        assert "capabilities.md" in text, f"{path.parent.name} no longer points at the rule"
+        assert "belongs in the kit" not in text, f"{path.parent.name} restates the rule"
+    deliver = (kit / "skills" / "deliver" / "SKILL.md").read_text()
+    assert "portable/kit-deliver/SKILL.md" not in deliver, (
+        "deliver loads the other hosts' protocol on top of its own"
+    )
 
 
 def test_policy_can_be_turned_off(repo: Path, data_dir: Path) -> None:
@@ -720,7 +738,7 @@ def test_broken_config_reports_unavailable(repo: Path, data_dir: Path) -> None:
 
 def test_changed_test_config_invalidates_prior_pass(repo: Path, data_dir: Path) -> None:
     (repo / "tests/test_env.py").write_text(
-        "import os\ndef test_env(): assert os.getenv('KIT_TEST') == 'good'\n"
+        "import os\nimport pkg.mathx\ndef test_env(): assert os.getenv('KIT_TEST') == 'good'\n"
     )
     set_config(repo, tests={"env": {"KIT_TEST": "good"}})
     base = {"session_id": "cache-check", "cwd": str(repo)}
@@ -770,3 +788,76 @@ def test_mixed_language_change_without_gate_is_unverified(repo: Path, data_dir: 
     (repo / "src/app.ts").write_text("x\n")
     result = manual(repo, "src/pkg/mathx.py", "src/app.ts", data_dir=data_dir)
     assert result.returncode == 1 and "src/app.ts" in result.stdout
+
+
+# ── which tests a source change runs ───────────────────────────────────────────
+def test_a_test_reached_through_a_relative_import_runs(repo: Path) -> None:
+    (repo / "src/pkg/consumer.py").write_text("from .mathx import double\n")
+    (repo / "tests/test_consumer_only.py").write_text("from pkg.consumer import double\n")
+    tests, _, _ = find_tests(repo, ["src/pkg/mathx.py"], {"test_dirs": ["tests"], "import_roots": ["src"]})
+    assert "tests/test_consumer_only.py" in tests
+    assert "tests/test_unrelated.py" not in tests, "selection fell back to the whole suite"
+
+
+def test_importers_of_a_deleted_module_still_run(repo: Path) -> None:
+    (repo / "src/pkg/consumer.py").write_text("from pkg.gone import thing\n")
+    (repo / "tests/test_consumer_only.py").write_text("import pkg.consumer\n")
+    tests, _, _ = find_tests(repo, ["src/pkg/gone.py"], {"test_dirs": ["tests"], "import_roots": ["src"]})
+    assert tests == ["tests/test_consumer_only.py"]
+
+
+def test_scope_all_runs_every_test_file_uncapped(repo: Path) -> None:
+    cfg = {"test_dirs": ["tests"], "import_roots": ["src"], "scope": "all", "max_files": 1}
+    tests, capped, _ = find_tests(repo, ["src/pkg/other.py"], cfg)
+    assert set(tests) == {"tests/test_mathx.py", "tests/test_unrelated.py", "tests/test_uses_import.py"}
+    assert capped == []
+
+
+def test_a_clean_diff_is_not_re_run_on_the_next_turn(repo: Path, data_dir: Path, tmp_path: Path) -> None:
+    runs = tmp_path / "runs.txt"
+    (repo / "tests/test_counted.py").write_text(
+        f"import pkg.mathx\ndef test_counted():\n    open({str(runs)!r}, 'a').write('x')\n"
+    )
+    commit(repo, "counted test")
+    base = {"session_id": "digest-check", "cwd": str(repo)}
+    hook("session_start.py", base, data_dir)
+    (repo / "src/pkg/mathx.py").write_text("def double(x):\n    return x + x\n")
+    assert hook("stop_verify.py", base, data_dir) == {}
+    assert hook("stop_verify.py", base, data_dir) == {}
+    assert runs.read_text() == "x", "the hook re-ran the tests on a diff it had already passed"
+
+
+def test_a_gap_is_reported_once_and_does_not_block(repo: Path, data_dir: Path) -> None:
+    base = {"session_id": "gap-check", "cwd": str(repo)}
+    hook("session_start.py", base, data_dir)
+    (repo / "README.md").write_text("docs\n")
+    first = hook("stop_verify.py", base, data_dir)
+    assert "hookSpecificOutput" not in first, "a docs edit Claude cannot fix blocked the stop"
+    assert "README.md" in first["systemMessage"]
+    assert hook("stop_verify.py", base, data_dir) == {}, "the same gap was reported every turn"
+
+
+def test_tests_using_a_conftest_fixture_run_when_its_import_changes(repo: Path) -> None:
+    (repo / "tests/conftest.py").write_text(
+        "import pytest\nfrom pkg.other import other\n\n@pytest.fixture\ndef one():\n    return other()\n"
+    )
+    (repo / "tests/test_fixture_only.py").write_text("def test_one(one):\n    assert one == 1\n")
+    cfg = {"test_dirs": ["tests"], "import_roots": ["src"], "max_files": 50}
+    tests, _, _ = find_tests(repo, ["src/pkg/other.py"], cfg)
+    assert "tests/test_fixture_only.py" in tests
+
+
+def test_an_untested_module_is_a_gap_even_beside_a_tested_one(repo: Path, data_dir: Path) -> None:
+    (repo / "src/pkg/lonely.py").write_text("def lonely():\n    return 0\n")
+    set_config(repo, lint={"enabled": False})
+    result = manual(repo, "src/pkg/mathx.py", "src/pkg/lonely.py", data_dir=data_dir)
+    assert result.returncode == 1 and "no test reaches src/pkg/lonely.py" in result.stdout
+    assert "INCOMPLETE" in result.stdout
+
+
+def test_a_gap_notice_never_says_the_checks_passed(repo: Path, data_dir: Path) -> None:
+    base = {"session_id": "gap-wording", "cwd": str(repo)}
+    hook("session_start.py", base, data_dir)
+    (repo / "README.md").write_text("docs\n")
+    message = hook("stop_verify.py", base, data_dir)["systemMessage"]
+    assert "INCOMPLETE" in message and "passed" not in message

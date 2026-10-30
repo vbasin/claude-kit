@@ -158,3 +158,24 @@ def test_native_install_reports_portable_updates_and_additions(tmp_path, monkeyp
     assert install_native.install(repo, host) == "installed"
     assert (repo / folder / "skills/new-skill/SKILL.md").is_file()
     assert install_native.install(repo, host) == "unchanged"
+
+
+def test_codex_stop_reports_gaps_alongside_failures(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".kit").mkdir()
+    (repo / ".kit/kit.json").write_text(json.dumps({"verification": {"enabled": True, "gates": [
+        {"name": "failure", "paths": ["*.txt"], "argv": [sys.executable, "-c", "raise SystemExit(1)"]}
+    ]}}))
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=test", "-c", "user.email=t@t", "commit", "-qm", "base"],
+                   check=True)
+    install_native.install(repo, "codex")
+    data = {"cwd": str(repo), "session_id": "gaps"}
+    call_hook(repo, "codex", "start", data, tmp_path)
+    (repo / "work.txt").write_text("work")
+    (repo / "notes.md").write_text("notes")
+    result = call_hook(repo, "codex", "stop", data, tmp_path)
+    assert result["decision"] == "block" and "Gate failure failed" in result["reason"]
+    assert "notes.md" in result["reason"], "the uncovered file vanished behind the failure"
