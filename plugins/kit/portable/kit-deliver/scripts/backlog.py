@@ -26,31 +26,41 @@ def clean(text: str) -> str:
 
 
 def read_records(path: Path) -> Dict[str, Dict[str, Any]]:
+    """Replay the log. A line that does not parse, such as one cut short by a crash, is
+    skipped with a warning: one bad line must not lock every later add and list."""
     records: Dict[str, Dict[str, Any]] = {}
     if not path.exists():
         return records
+    skipped = 0
     for line in path.read_text(encoding="utf-8").splitlines():
-        event = json.loads(line)
-        if not isinstance(event, dict) or event.get("kind") not in ("idea", "resolution"):
-            raise ValueError("invalid backlog event")
-        ident = event.get("id")
-        if not isinstance(ident, str) or not ident:
-            raise ValueError("invalid backlog id")
-        if event["kind"] == "idea":
-            if ident in records:
-                raise ValueError("duplicate backlog id")
+        try:
+            event = json.loads(line)
+        except ValueError:
+            event = None
+        ident = event.get("id") if isinstance(event, dict) else None
+        kind = event.get("kind") if isinstance(event, dict) else None
+        if not isinstance(ident, str) or not ident or kind not in ("idea", "resolution"):
+            skipped += 1
+        elif kind == "idea" and ident not in records:
             records[ident] = event
+        elif kind == "resolution" and ident in records:
+            records[ident] = {**records[ident], "status": event.get("status"),
+                              "resolution_evidence": event.get("evidence")}
         else:
-            if ident not in records:
-                raise ValueError("resolution refers to an unknown idea")
-            records[ident] = {**records[ident], "status": event["status"],
-                              "resolution_evidence": event["evidence"]}
+            skipped += 1
+    if skipped:
+        print(f"backlog: skipped {skipped} unreadable line(s) in {path}", file=sys.stderr)
     return records
 
 
 def append(path: Path, event: Dict[str, Any]) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     payload = (json.dumps(event, ensure_ascii=True, separators=(",", ":")) + "\n").encode("utf-8")
+    if path.exists() and path.stat().st_size:
+        with path.open("rb") as handle:
+            handle.seek(-1, os.SEEK_END)
+            if handle.read(1) != b"\n":  # a line cut short must not swallow this one
+                payload = b"\n" + payload
     if len(payload) > 16384:
         raise ValueError("event is too large")
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)

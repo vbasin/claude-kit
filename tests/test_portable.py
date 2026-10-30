@@ -228,3 +228,16 @@ def test_score_cli_never_exits_success_when_no_candidate_is_eligible(tmp_path):
     scorer = PLUGIN / "portable/kit-deliver/scripts/score.py"
     result = subprocess.run([sys.executable, str(scorer), str(input_file)], capture_output=True, text=True)
     assert result.returncode == 1 and json.loads(result.stdout)["ranked_eligible"] == []
+
+
+def test_a_corrupt_backlog_line_does_not_lock_the_backlog(tmp_path):
+    script = PLUGIN / "portable/kit-deliver/scripts/backlog.py"
+    backlog = tmp_path / "ideas.jsonl"
+    backlog.write_text('{"kind": "idea", "id": "a", "task": "t", "idea": "i"}\n{"kind": "ide')
+    base = [sys.executable, str(script), "--file", str(backlog)]
+    added = subprocess.run(base + ["add", "--task", "t2", "--idea", "i2", "--evidence", "e2"],
+                           capture_output=True, text=True)
+    assert added.returncode == 0, added.stderr
+    found = subprocess.run(base + ["list"], capture_output=True, text=True, check=True)
+    assert [r["task"] for r in json.loads(found.stdout)] == ["t", "t2"]
+    assert "skipped 1" in found.stderr

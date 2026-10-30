@@ -1,6 +1,6 @@
 # Does the kit actually help?
 
-Twelve cases, each one a prompt the kit claims to handle better than a bare session. Every
+Each case is a prompt the kit claims to handle better than a bare session. Every
 case runs with the plugin and again with no plugin at all, and the number that matters is
 **Δ** — the with-arm score minus the without-arm score. A case that scores 1.0 in both
 arms is not evidence for the kit; it is evidence the model did it anyway.
@@ -18,7 +18,7 @@ claude plugin eval ./plugins/kit --ablation none --runs 2 --case obvious-fix-sta
 ```
 
 The suite uses your normal Claude Code credentials and counts against your plan's usage,
-so a full pass is 12 cases × 3 runs × 2 arms = **72 agent runs**, plus three short judge
+so a full pass is **six agent runs per case** (3 runs × 2 arms), plus three short judge
 calls per `llm` grader per run. `--runs 2` and `--case <glob>` are the two dials.
 Everything here is read-only: no `--allow-tools`, no `--scaffold`, no fixtures on disk —
 each prompt carries whatever the task needs, so the suite never touches a real repo.
@@ -53,10 +53,9 @@ read its Δ.
 
 | Case | The claim it can falsify | Read Δ as |
 |---|---|---|
-| `host-review` | Relevant independent review and honest verification | Positive: reviews are assigned without invented results |
-| `task-first` | Existing capability is used to deliver before optional improvements | Positive: the correct order is followed |
-| `capability-required` | A prerequisite missing capability is built or obtained during the task | Positive: the task is not deferred |
-| `reusable-capability` | A repeated gap leads to a tested reusable candidate | Positive: the candidate workflow is used |
+| `task-first` | The kit's improvement loop never runs ahead of the user's task | **Near zero is the pass**, like `obvious-fix-stays-cheap`: a bare model already delivers first (measured 1.00 / 1.00 on 2026-10-30). Negative means `improve` is pulling sessions off the task |
+| `capability-required` | A missing prerequisite is obtained during the task, not deferred to the improvement loop | **Near zero is the pass**: the risk is the kit teaching deferral, not the bare model lacking the instinct |
+| `reusable-capability` | A repeated gap leads to a candidate scored against a baseline, with evidence that can see an instructions-only skill | Positive: measured +1.00 on one run per arm (2026-10-30), with `improve` never invoked, so the skill descriptions alone carried it |
 | `design-not-handed-back` | The design is Claude's to settle, and it settles it by comparing rivals against stated criteria | Positive: the deliberation loop is doing work a bare session doesn't |
 | `obvious-fix-stays-cheap` | The kit doesn't charge design ceremony for a one-line fix | **Near zero is the pass.** Strongly negative means the kit is making trivial work expensive |
 | `duplication-is-a-defect` | Duplication and dead config are reportable defects, named at their location | Positive: the standards floor in `deliver` and `reviewer` is landing |

@@ -104,6 +104,8 @@ def validate_verification_config(cfg: Dict[str, Any]) -> None:
         value = cfg["tests"].get(key)
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"Invalid kit configuration: tests.{key} must be a positive integer")
+    if cfg["tests"].get("scope", "related") not in ("related", "all"):
+        raise ValueError('Invalid kit configuration: tests.scope must be "related" or "all"')
     env = cfg["tests"].get("env")
     if env is not None and (not isinstance(env, dict) or not all(
         isinstance(k, str) and isinstance(v, str) for k, v in env.items()

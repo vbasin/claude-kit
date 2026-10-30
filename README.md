@@ -82,9 +82,9 @@ A repo points `deliver` at its own gates and reviewers in `.claude/kit.json`:
 | SessionStart | `session_policy.py` | Prints the routing policy into the session, so one prompt reaches both the right approach and the right scale of work |
 | PreToolUse (Bash) | `bash_guard.py` | Asks before `DROP`/`TRUNCATE`/`DELETE` without `WHERE`/chunk operations, before full-suite pytest runs (opt-in), and before repo-specific patterns |
 | PostToolUse (Edit/Write) | `post_edit.py` | Remembers the edited file and lints it at once |
-| Stop | `stop_verify.py` | Lints the session's changed `.py` files and runs all discovered tests for source changes, and directly related tests for test-only changes, as explicit paths. On failure it sends the output back so Claude keeps working. If Claude stops again with the same failure, it lets the stop through with a notice, so a pre-existing failure can't trap a session |
+| Stop | `stop_verify.py` | Lints the session's changed `.py` files and runs the tests related to them, as explicit paths: their own test files and every test whose imports reach them, nearest first, up to `tests.max_files`. On failure it sends the output back so Claude keeps working. Gaps it cannot close (files no gate covers, tests left out by the cap) are shown to you once and do not block. A diff that already passed is not re-run on the next turn. If Claude stops again with the same failure, it lets the stop through with a notice, so a pre-existing failure can't trap a session |
 
-Without explicit verification gates, source changes run all configured Python test files; test-only changes use related files up to `tests.max_files`, with capped or excluded files reported as incomplete. Deleted files are included. Each run starts with an empty bytecode cache, and an interpreter without pytest counts as a failure rather than a pass. A repo can add guard patterns in `.claude/kit.json`:
+Related tests are found through the repo's own import graph, so a test of `b.py` still runs when `a.py`, which `b` imports, changed. Deleted files are included. Each run starts with an empty bytecode cache, and an interpreter without pytest counts as a failure rather than a pass. `tests.scope: "all"` runs every test file instead, for a repo whose whole suite is cheap. In a large repo many edits reach most of the suite through shared modules (in ML_analytics, editing `src/common/config.py` reaches 162 of 180 test files), so there the cap is what keeps the hook fast and `verification.gates` is the better tool: the repo says what covers what instead of the hook inferring it. A repo can add guard patterns in `.claude/kit.json`:
 
 ```json
 "guards": { "patterns": [ { "regex": "databento.*(download|get_range)", "reason": "Check the data cost first", "decision": "ask" } ] }
@@ -92,7 +92,7 @@ Without explicit verification gates, source changes run all configured Python te
 
 ## Does the kit help?
 
-`plugins/kit/evals/` is an eleven-case `claude plugin eval` suite. Every case runs with the
+`plugins/kit/evals/` is a `claude plugin eval` suite. Every case runs with the
 plugin and again with no plugin at all, so the number it reports is **Δ** — what the kit
 contributed, not what the model would have done anyway.
 
@@ -102,8 +102,8 @@ claude plugin eval ./plugins/kit --ablation with-without
 
 | Case | Claim it can falsify |
 |---|---|
-| `task-first` | A suitable existing tool completes the user's task before optional kit improvements |
-| `capability-required` | A missing task-critical capability is obtained or built during the task |
+| `task-first` | The kit's improvement loop never runs ahead of the user's task (a guard: Δ near zero is the pass) |
+| `capability-required` | A missing prerequisite is obtained during the task, not deferred (a guard: Δ near zero is the pass) |
 | `reusable-capability` | A repeated gap leads to a tested reusable candidate |
 | `design-not-handed-back` | The design is Claude's to settle, by comparing rivals against stated criteria |
 | `obvious-fix-stays-cheap` | The kit doesn't charge design ceremony for a one-line fix |
@@ -118,7 +118,7 @@ claude plugin eval ./plugins/kit --ablation with-without
 because every always-on token the kit adds is paid on trivial prompts too. A suite made
 only of cases the kit is designed to win would never report that.
 
-The suite spends plan usage — 11 cases × 3 runs × 2 arms is 66 agent runs — so it is run by
+The suite spends plan usage — 3 runs × 2 arms is six agent runs per case — so it is run by
 hand, not in CI, which would need an `ANTHROPIC_API_KEY` a subscription doesn't provide.
 `python -m pytest tests/test_evals.py` checks the suite's schema for free.
 [`plugins/kit/evals/README.md`](plugins/kit/evals/README.md) covers the dials and how to

@@ -3,11 +3,19 @@
 Runs only when the repo opts in through `.claude/kit.json` (`lint.enabled`, `tests.enabled`).
 Scope is the session's own changes: files edited through Claude's tools plus anything
 that changed on disk or in commits since SessionStart, deletions included. Tests are
-picked per changed file (its own test file, `test_<module>*.py`, test files that import
-it, and for a `conftest.py` the test files beneath it), capped at `tests.max_files`,
-minus any `tests.exclude` globs (e.g. tests that need another virtualenv), and always
-passed to pytest as explicit paths, never as a whole suite. Each pytest run gets an
-empty bytecode cache, so a stale `.pyc` can't stand in for the edited source.
+picked per changed file: its own test file, `test_<module>*.py`, every test file whose
+imports reach it through the repo's own modules (so a test of B still runs when A, which B
+imports, changed), and for a `conftest.py` the test files beneath it. That set is capped at
+`tests.max_files`, minus any `tests.exclude` globs, and always passed to pytest as
+explicit paths. `tests.scope: "all"` runs every discovered test file instead, for a repo
+whose whole suite is cheap. Each pytest run gets an empty bytecode cache, so a stale `.pyc`
+can't stand in for the edited source.
+
+Failures (lint findings, failing tests or gates, a missing interpreter) block the stop.
+Gaps (files no gate covers, tests capped or excluded, nothing selected) are reported to
+the user once per state of the diff and do not block: Claude cannot fix a gap by trying
+again, and the hook fires at the end of every turn. A diff that already passed, or whose
+gaps were already reported, is not re-run.
 
 Loop safety: a failure blocks the stop once. If Claude tries to stop again with the
 same failure, the stop is allowed and the user sees a notice instead, so a
@@ -15,6 +23,7 @@ pre-existing failure can't trap the session.
 
 Manual use (the `kit:verify` skill): `python3 stop_verify.py --manual [FILE ...]`
 checks the given files, or every dirty file when none are given, and prints a report.
+It exits 0 when verified, 1 when something failed or is incomplete, 2 when unavailable.
 """
 
 from __future__ import annotations
@@ -22,6 +31,7 @@ from __future__ import annotations
 import ast
 import fnmatch
 import hashlib
+import os
 import re
 import shutil
 import subprocess
@@ -33,6 +43,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from gates import run_gates
 from kit_common import (
+    CONFIG_RELPATH,
     changed_since,
     dirty_files,
     emit,
@@ -50,6 +61,7 @@ from kit_common import (
 )
 
 PYTEST_NO_TESTS = 5
+INCOMPLETE = "Verification incomplete: "
 
 
 def _is_test_file(rel: str, test_dirs: List[str]) -> bool:
@@ -62,9 +74,10 @@ DOTTED = re.compile(r"[A-Za-z_]\w*(?:\.\w+)+")
 IMPORT_FALLBACK = re.compile(r"^\s*(?:from\s+([\w.]+)\s+import\s+\(?([\w\s,]+)|import\s+([\w.]+))", re.M)
 
 
-def imported_names(source: str) -> Set[str]:
-    """Dotted names a test refers to: imported modules, `module.name` for each from-import,
-    and dotted strings under an imported package, such as `mock.patch("pkg.mod.func")`."""
+def imported_names(source: str, package: str = "") -> Set[str]:
+    """Dotted names a file refers to: imported modules, `module.name` for each from-import,
+    and dotted strings under an imported package, such as `mock.patch("pkg.mod.func")`.
+    Relative imports resolve against `package`, the dotted package the file sits in."""
     names: Set[str] = set()
     strings: Set[str] = set()
     try:
@@ -80,9 +93,18 @@ def imported_names(source: str) -> Set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             names.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-            names.add(node.module)
-            names.update(f"{node.module}.{alias.name}" for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and (node.module or node.level):
+            module = node.module or ""
+            if node.level:
+                parts = package.split(".") if package else []
+                if node.level - 1 > len(parts):
+                    continue
+                base = parts[:len(parts) - (node.level - 1)]
+                module = ".".join(base + ([module] if module else []))
+                if not module:
+                    continue
+            names.add(module)
+            names.update(f"{module}.{alias.name}" for alias in node.names)
         elif isinstance(node, ast.Constant) and isinstance(node.value, str) and DOTTED.fullmatch(node.value):
             strings.add(node.value)
     packages = {n.split(".", 1)[0] for n in names}
@@ -90,76 +112,134 @@ def imported_names(source: str) -> Set[str]:
     return names
 
 
-def _refers_to(names: Set[str], module: str) -> bool:
-    prefix = module + "."
-    return any(n == module or n.startswith(prefix) for n in names)
+SKIP_DIRS = {"node_modules", "__pycache__", "site-packages", "venv", "build", "dist"}
 
 
-def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> Tuple[List[str], int, int]:
-    """Explicit test paths and counts omitted by the cap and exclusions.
+def _module_names(rel: str, strip_roots: Set[str]) -> List[str]:
+    """The dotted names a file is importable as: its path, and its path below an import root."""
+    parts = list(Path(rel).with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    if not parts:
+        return []
+    names = [".".join(parts)]
+    if parts[0] in strip_roots and len(parts) > 1:
+        names.append(".".join(parts[1:]))
+    return names
+
+
+def _python_files(root: Path) -> List[str]:
+    found: List[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in SKIP_DIRS)
+        base = Path(dirpath).relative_to(root)
+        found.extend((base / f).as_posix() for f in sorted(filenames) if f.endswith(".py"))
+    return found
+
+
+def _importers(root: Path, changed: List[str], strip_roots: Set[str]) -> Dict[str, Set[str]]:
+    """For each repo file, the repo files that import it.
+
+    The graph is the repo's own modules only. Importing `pkg.mod` counts as importing
+    `pkg` too, as it does at run time. Imports Python resolves at run time (importlib,
+    registries) are not seen.
+    """
+    files = _python_files(root)
+    index: Dict[str, Set[str]] = {}
+    for rel in files + changed:  # changed files may be deleted; their importers still matter
+        for name in _module_names(rel, strip_roots):
+            index.setdefault(name, set()).add(rel)
+    reverse: Dict[str, Set[str]] = {}
+    for rel in files:
+        names = _module_names(rel, strip_roots)
+        package = names[-1] if names else ""
+        if names and Path(rel).name != "__init__.py":
+            package = package.rpartition(".")[0]
+        try:
+            source = (root / rel).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for ref in imported_names(source, package):
+            parts = ref.split(".")
+            for n in range(len(parts), 0, -1):
+                for target in index.get(".".join(parts[:n]), ()):
+                    if target != rel:
+                        reverse.setdefault(target, set()).add(rel)
+    return reverse
+
+
+def _dependents(reverse: Dict[str, Set[str]], changed: List[str]) -> Dict[str, int]:
+    """Every file whose imports reach a changed file, with its import distance, so a test
+    of B is found when A, which B imports, changed."""
+    distance: Dict[str, int] = {rel: 0 for rel in changed}
+    frontier = list(changed)
+    while frontier:
+        nxt: List[str] = []
+        for rel in frontier:
+            for user in sorted(reverse.get(rel, ())):
+                if user not in distance:
+                    distance[user] = distance[rel] + 1
+                    nxt.append(user)
+        frontier = nxt
+    return distance
+
+
+def _all_tests(root: Path, test_dirs: List[str]) -> List[str]:
+    found: Set[str] = set()
+    for d in test_dirs:
+        base = root / d
+        if base.is_dir():
+            found.update(
+                p.relative_to(root).as_posix() for p in base.rglob("*.py")
+                if p.name.startswith("test_") or p.name.endswith("_test.py")
+            )
+    return sorted(found)
+
+
+def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> Tuple[List[str], List[str], int]:
+    """Explicit test paths, the related ones the cap left out, and how many were excluded.
 
     Changed files may have been deleted: their tests are exactly the ones that should fail.
     """
     test_dirs = [d.strip("/") for d in tests_cfg.get("test_dirs", ["tests"])]
     strip_roots = set(tests_cfg.get("import_roots", ["src"]))
-    all_tests: List[str] = []
-    for d in test_dirs:
-        base = root / d
-        if base.is_dir():
-            all_tests.extend(
-                p.relative_to(root).as_posix()
-                for p in sorted(base.rglob("*.py"))
-                if p.name.startswith("test_") or p.name.endswith("_test.py")
-            )
-    parsed: Dict[str, Set[str]] = {}
-
-    def refs(rel: str) -> Set[str]:
-        if rel not in parsed:
-            try:
-                parsed[rel] = imported_names((root / rel).read_text(encoding="utf-8", errors="ignore"))
-            except OSError:
-                parsed[rel] = set()
-        return parsed[rel]
-
-    direct = [rel for rel in changed_py if _is_test_file(rel, test_dirs)]
-    by_name: List[str] = []
-    by_import: List[str] = []
-    by_conftest: List[str] = []
-    for rel in changed_py:
-        if rel in direct:
-            continue
-        if Path(rel).name == "conftest.py":
-            scope = Path(rel).parent.as_posix()
-            by_conftest.extend(t for t in all_tests if scope == "." or t.startswith(scope + "/"))
-            continue
-        parts = list(Path(rel).with_suffix("").parts)
-        if parts and parts[-1] == "__init__":
-            parts = parts[:-1]
-        if not parts:
-            continue
-        stem = parts[-1]
-        dotted = [".".join(parts)]
-        if parts[0] in strip_roots and len(parts) > 1:
-            dotted.append(".".join(parts[1:]))
-        for t in all_tests:
-            tname = Path(t).stem
-            if tname == f"test_{stem}" or tname.startswith(f"test_{stem}_"):
-                by_name.append(t)
-            elif any(_refers_to(refs(t), d) for d in dotted):
-                by_import.append(t)
+    all_tests = _all_tests(root, test_dirs)
+    if tests_cfg.get("scope") == "all":
+        ordered = all_tests
+    else:
+        direct = [rel for rel in changed_py if _is_test_file(rel, test_dirs)]
+        by_name: List[str] = []
+        by_conftest: List[str] = []
+        sources: List[str] = []
+        for rel in changed_py:
+            if rel in direct:
+                continue
+            if Path(rel).name == "conftest.py":
+                scope = Path(rel).parent.as_posix()
+                by_conftest.extend(t for t in all_tests if scope == "." or t.startswith(scope + "/"))
+                continue
+            sources.append(rel)
+            names = _module_names(rel, strip_roots)
+            stem = names[0].rsplit(".", 1)[-1] if names else ""
+            by_name.extend(t for t in all_tests
+                           if stem and (Path(t).stem == f"test_{stem}" or Path(t).stem.startswith(f"test_{stem}_")))
+        reached = _dependents(_importers(root, sources, strip_roots), sources) if sources else {}
+        tests = set(all_tests)
+        by_import = sorted((rel for rel in reached if rel in tests), key=lambda rel: (reached[rel], rel))
+        ordered = direct + by_name + by_import + by_conftest
 
     excluded = tests_cfg.get("exclude", []) or []
     selected: List[str] = []
     omitted: Set[str] = set()
-    for rel in direct + by_name + by_import + by_conftest:
+    for rel in ordered:
         if rel in selected or not (root / rel).is_file():
             continue
         if any(fnmatch.fnmatch(rel, pat) for pat in excluded):
             omitted.add(rel)
             continue
         selected.append(rel)
-    cap = int(tests_cfg.get("max_files", 8))
-    return selected[:cap], max(0, len(selected) - cap), len(omitted)
+    cap = len(selected) if tests_cfg.get("scope") == "all" else int(tests_cfg.get("max_files", 8))
+    return selected[:cap], selected[cap:], len(omitted)
 
 
 def lint_files(root: Path, python: str, cfg: Dict[str, Any], files: List[str],
@@ -179,7 +259,7 @@ def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str],
     if not tcfg.get("enabled"):
         return None
     if not tests:
-        return "No related tests were selected; verification is incomplete."
+        return None
     cmd = [python, "-m", "pytest", *tcfg.get("pytest_args", []), *tests]
     # An empty bytecode cache per run: a same-size edit within the mtime resolution of an
     # existing __pycache__ entry would otherwise run the old code and pass.
@@ -190,13 +270,14 @@ def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str],
         if deadline is not None:
             timeout = min(timeout, deadline - time.monotonic())
             if timeout <= 0:
-                return "pytest incomplete: hook time budget exhausted"
+                return INCOMPLETE + "the hook's time budget ran out before pytest started."
         proc = run(
             cmd, root, timeout=timeout,
-            env_file=tcfg.get("env_file"), extra_env=env,
+            env_file=tcfg.get("env_file"), extra_env=env, kill_tree=True,
         )
     except subprocess.TimeoutExpired:
-        return f"pytest timed out after {tcfg.get('timeout_s', 300)}s on: {' '.join(tests)}"
+        return (INCOMPLETE + f"pytest timed out after {tcfg.get('timeout_s', 300)}s on: {' '.join(tests)}. "
+                "Use the repo's scoped gate, or raise tests.timeout_s.")
     except OSError as exc:
         return f"pytest could not run: {exc}"
     finally:
@@ -204,7 +285,7 @@ def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str],
     if proc.returncode == 0:
         return None
     if proc.returncode == PYTEST_NO_TESTS:
-        return "pytest collected no tests; verification is incomplete."
+        return INCOMPLETE + "pytest collected no tests."
     if "No module named pytest" in proc.stderr:
         return (f"pytest is not installed for {python}, so no tests ran. Install it there, point "
                 "`python` in .claude/kit.json at an interpreter that has it, or set tests.enabled to false.")
@@ -212,64 +293,64 @@ def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str],
 
 
 def verify(root: Path, cfg: Dict[str, Any], changed: List[str],
-           deadline: Optional[float] = None) -> Tuple[List[str], List[str], int]:
-    """Return (failure sections, tests run, tests capped)."""
+           deadline: Optional[float] = None) -> Tuple[List[str], List[str], List[str]]:
+    """Return (failures, tests run, gaps).
+
+    A failure is something Claude can fix by changing code. A gap is coverage this run
+    could not provide; it is reported, but another attempt would not close it.
+    """
+    gated = bool(cfg.get("verification", {}).get("enabled"))
+    tcfg = cfg.get("tests", {})
     changed_py = [f for f in changed if f.endswith(".py")]
     reserve = 120 if changed_py and cfg.get("lint", {}).get("enabled") else 0
     gate_deadline = deadline - reserve if deadline is not None else None
-    gate_failures, _ = run_gates(root, cfg, changed, deadline=gate_deadline)
-    python = resolve_python(cfg, root)
-    if not changed_py:
-        if changed and not cfg.get("verification", {}).get("enabled"):
-            return ["No configured verification gates cover these non-Python files."], [], 0
-        return gate_failures, [], 0
-    if python is None:
-        needs_tests = cfg.get("tests", {}).get("enabled") and not cfg.get("verification", {}).get("enabled")
-        if not (cfg.get("lint", {}).get("enabled") or needs_tests):
-            return gate_failures, [], 0
-        return gate_failures + [f"No interpreter from `python` in .claude/kit.json exists here "
-                f"({cfg.get('python') or ['python3']}), "
-                "so lint and tests did not run. Create it, add a fallback such as \"python3\", or "
-                "disable lint and tests."], [], 0
-    failures: List[str] = list(gate_failures)
-    if not cfg.get("verification", {}).get("enabled"):
+    failures, _ = run_gates(root, cfg, changed, deadline=gate_deadline)
+    gaps: List[str] = []
+    if gated:
+        gaps = [f for f in failures if f.startswith("No configured gate covers")]
+        failures = [f for f in failures if f not in gaps]
+    else:
         non_python = [f for f in changed if not f.endswith(".py")]
         if non_python:
-            failures.append("No configured verification gates cover: " + ", ".join(non_python))
+            gaps.append("No configured verification gates cover these non-Python files: "
+                        + ", ".join(non_python))
+    if not changed_py:
+        return failures, [], gaps
+    python = resolve_python(cfg, root)
+    if python is None:
+        if not (cfg.get("lint", {}).get("enabled") or (tcfg.get("enabled") and not gated)):
+            return failures, [], gaps
+        return failures + [f"No interpreter from `python` in .claude/kit.json exists here "
+                f"({cfg.get('python') or ['python3']}), "
+                "so lint and tests did not run. Create it, add a fallback such as \"python3\", or "
+                "disable lint and tests."], [], gaps
     lint_out = lint_files(root, python, cfg, [f for f in changed_py if (root / f).is_file()], deadline=deadline)
     if lint_out:
         failures.append(f"Lint ({' '.join(cfg['lint'].get('args', []))}):\n{lint_out}")
-    tests: List[str] = []
-    capped = 0
-    excluded_count = 0
-    if cfg.get("tests", {}).get("enabled") and not cfg.get("verification", {}).get("enabled"):
-        tcfg = cfg.get("tests", {})
-        tests, capped, excluded_count = find_tests(root, changed_py, tcfg)
-        # Source changes can affect tests through indirect imports. Run all discovered
-        # test files for correctness; explicit exclusions remain visible as incomplete.
-        if any(not _is_test_file(f, tcfg.get("test_dirs", ["tests"])) for f in changed_py):
-            all_tests = sorted({p.relative_to(root).as_posix()
-                               for d in tcfg.get("test_dirs", ["tests"])
-                               if (root / d).is_dir() for p in (root / d).rglob("*.py")
-                               if p.name.startswith("test_") or p.name.endswith("_test.py")})
-            excluded = tcfg.get("exclude", []) or []
-            tests = [f for f in all_tests if not any(fnmatch.fnmatch(f, pat) for pat in excluded)]
-            excluded_count = len(all_tests) - len(tests)
-            capped = 0
+    if gated or not tcfg.get("enabled"):
+        return failures, [], gaps
+    tests, capped, excluded_count = find_tests(root, changed_py, tcfg)
     if capped:
-        failures.append(f"Verification incomplete: {capped} test files were omitted by tests.max_files.")
+        shown = " ".join(capped[:10]) + (f" and {len(capped) - 10} more" if len(capped) > 10 else "")
+        gaps.append(INCOMPLETE + f"{len(capped)} related test files, further from the change "
+                    f"than the ones run, were omitted by tests.max_files: {shown}")
     if excluded_count:
-        failures.append(f"Verification incomplete: {excluded_count} test files were omitted by exclusions.")
-    test_out = (run_tests(root, python, cfg, tests, deadline=deadline)
-                if not cfg.get("verification", {}).get("enabled") else None)
-    if test_out:
+        gaps.append(INCOMPLETE + f"{excluded_count} test files were omitted by exclusions.")
+    if not tests:
+        gaps.append(INCOMPLETE + "no related tests were selected.")
+        return failures, [], gaps
+    test_out = run_tests(root, python, cfg, tests, deadline=deadline)
+    if test_out and test_out.startswith(INCOMPLETE):
+        gaps.append(test_out)
+    elif test_out:
         failures.append(f"Tests (pytest {' '.join(tests)}):\n{test_out}")
-    return failures, tests, capped + excluded_count
+    return failures, tests, gaps
 
 
 def _digest(root: Path, files: List[str]) -> str:
+    """The state a verdict was reached on: the changed files and the config that judged them."""
     h = hashlib.sha256()
-    for rel in files:
+    for rel in [*files, CONFIG_RELPATH.as_posix(), ".kit/kit.json"]:
         h.update(rel.encode())
         h.update((file_digest(root / rel) or "-").encode())
     return h.hexdigest()
@@ -300,11 +381,20 @@ def hook_main() -> int:
     if not changed:
         return 0
     digest = _digest(root, changed)
+    # The hook fires at the end of every turn. A diff already judged clean, or whose gaps
+    # were already reported, gets the same verdict again, so do not pay for it twice.
+    if digest in (state.get("passed_digest"), state.get("gaps_digest")):
+        return 0
 
-    failures, tests, capped = verify(root, cfg, changed, deadline=deadline)
+    failures, _, gaps = verify(root, cfg, changed, deadline=deadline)
     if not failures:
-        state["passed_digest"] = digest
         state.pop("failed_digest", None)
+        if gaps:
+            state["gaps_digest"] = digest
+            save_state(session_id, state)
+            emit({"systemMessage": "kit verify: lint and tests passed, with gaps.\n" + "\n".join(gaps)})
+            return 0
+        state["passed_digest"] = digest
         save_state(session_id, state)
         return 0
 
@@ -314,9 +404,7 @@ def hook_main() -> int:
         return 0
     state["failed_digest"] = digest
     save_state(session_id, state)
-    note = ""
-    if capped:
-        note = f"\n({capped} more related test files were not run; use the repo's scoped gate for broader coverage.)"
+    note = ("\n\nAlso not covered, and not something to fix now:\n" + "\n".join(gaps)) if gaps else ""
     # additionalContext keeps Claude going like decision=block, but reads as feedback, not a hook error.
     emit({"hookSpecificOutput": {
         "hookEventName": "Stop",
@@ -340,19 +428,17 @@ def manual_main(files: List[str]) -> int:
         print(f"kit verify: unavailable: {exc}")
         return 2
     changed = [relative_to_root(root, f) or f for f in files] or dirty_files(root, include_deleted=True)
-    failures, tests, capped = verify(root, cfg, changed)
+    failures, tests, gaps = verify(root, cfg, changed)
     py = [f for f in changed if f.endswith(".py")]
     print(f"kit verify: {len(py)} changed Python file(s); tests run: {' '.join(tests) or 'none'}")
-    if capped:
-        print(f"  ({capped} related test files not run; see omissions above)")
-    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")
-            or cfg.get("verification", {}).get("enabled")):
+    enabled = any(cfg.get(k, {}).get("enabled") for k in ("lint", "tests", "verification"))
+    if not enabled:
         print("  no checks are enabled: add .claude/kit.json to this repo to enable them")
-    if failures:
-        print("\n\n".join(failures))
+    if failures or gaps:
+        print("\n\n".join(failures + gaps))
+        print("kit verify: FAILED" if failures else "kit verify: INCOMPLETE")
         return 1
-    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")
-            or cfg.get("verification", {}).get("enabled")):
+    if not enabled:
         print("kit verify: SKIPPED (no checks enabled)")
         return 2
     print("kit verify: OK")
