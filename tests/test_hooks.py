@@ -20,6 +20,8 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "plugins" / "kit" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from bash_guard import check, is_full_suite  # noqa: E402
+from gates import run_gates  # noqa: E402
+from kit_common import changed_since, snapshot  # noqa: E402
 from stop_verify import find_tests  # noqa: E402
 
 PY_CANDIDATES = [".venv/bin/python"]
@@ -211,6 +213,17 @@ def test_find_tests_by_name_and_import(repo: Path) -> None:
     assert capped == 0
 
 
+def test_unborn_baseline_tracks_new_commits_but_not_unchanged_existing_files(tmp_path: Path) -> None:
+    root = tmp_path / "new-repo"
+    root.mkdir()
+    sh(root, "git", "init", "-q")
+    (root / "existing.txt").write_text("present before session")
+    baseline = snapshot(root)
+    (root / "created file.txt").write_text("created during session")
+    commit(root, "first commit")
+    assert changed_since(root, baseline, []) == ["created file.txt"]
+
+
 def test_find_tests_changed_test_file_and_cap(repo: Path) -> None:
     tests, capped, _ = find_tests(
         repo, ["tests/test_unrelated.py", "src/pkg/mathx.py"], {"test_dirs": ["tests"], "max_files": 2}
@@ -253,6 +266,32 @@ def test_excluded_changed_test_is_reported(repo: Path, data_dir: Path) -> None:
     result = manual(repo, "tests/test_mathx.py", "tests/test_unrelated.py", data_dir=data_dir)
     assert result.returncode == 1
     assert "1 test files were omitted by exclusions" in result.stdout
+
+
+def test_bad_gate_cwd_does_not_skip_other_gates(repo: Path) -> None:
+    gates = [{"name": "bad", "paths": ["*.py"], "argv": [sys.executable, "-c", "pass"], "cwd": None},
+             {"name": "good", "paths": ["*.py"], "argv": [sys.executable, "-c", "pass"]}]
+    failures, ran = run_gates(repo, {"verification": {"enabled": True, "gates": gates}}, ["x.py"])
+    assert any("Gate bad unavailable" in f for f in failures)
+    assert ran == ["good"]
+
+
+def test_gate_deadline_reports_unstarted_checks(repo: Path) -> None:
+    import time
+    gates = [{"name": "slow", "paths": ["*.py"], "argv": [sys.executable, "-c", "import time; time.sleep(2)"]},
+             {"name": "later", "paths": ["*.py"], "argv": [sys.executable, "-c", "pass"]}]
+    failures, _ = run_gates(repo, {"verification": {"enabled": True, "gates": gates}}, ["x.py"],
+                            deadline=time.monotonic() + 0.1)
+    assert any("Gate slow unavailable" in f for f in failures)
+    assert any("Gate later incomplete" in f for f in failures)
+
+
+def test_gate_mode_does_not_require_project_python(repo: Path, data_dir: Path) -> None:
+    set_config(repo, python=["nonexistent-python-kit"], lint={"enabled": False},
+               verification={"enabled": True, "gates": [{"name": "external", "paths": ["*.py"],
+                              "argv": [sys.executable, "-c", "pass"]}]})
+    result = manual(repo, "src/pkg/mathx.py", data_dir=data_dir)
+    assert result.returncode == 0, result.stdout
 
 
 def test_overlapping_test_dirs_run_each_file_once(repo: Path, data_dir: Path) -> None:
@@ -305,10 +344,10 @@ def test_preexisting_dirty_file_is_ignored(repo: Path, data_dir: Path) -> None:
     (repo / "src" / "pkg" / "mathx.py").write_text("def double(x):\n    return x * 3\n")  # broken before the session
     sid = str(uuid.uuid4())
     base = {"session_id": sid, "cwd": str(repo)}
+    set_config(repo, tests={"enabled": False})
     hook("session_start.py", {**base, "source": "startup"}, data_dir)
     assert hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir) == {}
 
-    set_config(repo, tests={"enabled": False})
     other = repo / "src" / "pkg" / "other.py"
     other.write_text("def other():\n    return 2\n")  # changed via Bash, not an Edit tool
     assert hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir) == {}
@@ -410,8 +449,8 @@ def test_committed_baseline_dirty_file_is_ignored(repo: Path, data_dir: Path) ->
     (repo / "src" / "pkg" / "mathx.py").write_text("def double(x):\n    return x * 3\n")  # broken before the session
     sid = str(uuid.uuid4())
     base = {"session_id": sid, "cwd": str(repo)}
-    hook("session_start.py", {**base, "source": "startup"}, data_dir)
     set_config(repo, tests={"enabled": False})
+    hook("session_start.py", {**base, "source": "startup"}, data_dir)
     (repo / "src" / "pkg" / "other.py").write_text("def other():\n    return 2\n")
     commit(repo, "session work, sweeping in the pre-existing edit")
     assert hook("stop_verify.py", {**base, "stop_hook_active": False}, data_dir) == {}
@@ -516,7 +555,7 @@ def test_a_generic_addition_is_offered_to_the_kit() -> None:
                / "deliver" / "SKILL.md").read_text()
     harness = deliver.split("## Working out the harness as you go", 1)[1]
     assert "belongs in the kit" in harness, "nothing promotes a generic addition"
-    assert "user's call" in harness, "promotion has to stay the user's decision"
+    assert "after evaluation" in harness, "promotion requires evaluation"
 
 
 def test_policy_can_be_turned_off(repo: Path, data_dir: Path) -> None:
@@ -606,3 +645,44 @@ def test_changed_test_config_invalidates_prior_pass(repo: Path, data_dir: Path) 
     assert hook("stop_verify.py", base, data_dir) == {}
     set_config(repo, tests={"env": {"KIT_TEST": "bad"}})
     assert "test_env" in hook("stop_verify.py", base, data_dir)["hookSpecificOutput"]["additionalContext"]
+
+
+def test_language_neutral_gate_pass_fail_and_uncovered(repo: Path, data_dir: Path) -> None:
+    source = repo / "src/app.ts"
+    source.write_text("export const answer = 42;\n")
+    set_config(repo, lint={"enabled": False}, tests={"enabled": False}, verification={
+        "enabled": True, "gates": [{"name": "typescript", "paths": ["src/*.ts"],
+                                    "argv": [sys.executable, "-c", "import sys; sys.exit(0)"]}]})
+    result = manual(repo, "src/app.ts", data_dir=data_dir)
+    assert result.returncode == 0, result.stdout
+    set_config(repo, verification={"gates": [{"name": "typescript", "paths": ["src/*.ts"],
+                                               "argv": [sys.executable, "-c", "import sys; sys.exit(3)"]}]})
+    result = manual(repo, "src/app.ts", data_dir=data_dir)
+    assert result.returncode == 1 and "Gate typescript failed (exit 3)" in result.stdout
+    result = manual(repo, "README.md", data_dir=data_dir)
+    assert result.returncode == 1 and "No configured gate covers" in result.stdout
+
+
+def test_gate_command_does_not_use_shell_and_cannot_escape_repo(repo: Path, data_dir: Path) -> None:
+    (repo / "src/app.ts").write_text("x\n")
+    set_config(repo, lint={"enabled": False}, tests={"enabled": False}, verification={
+        "enabled": True, "gates": [{"name": "bad", "paths": ["src/*.ts"],
+                                    "argv": ["this-does-not-exist;touch", "marker"]}]})
+    result = manual(repo, "src/app.ts", data_dir=data_dir)
+    assert result.returncode == 1 and not (repo / "marker").exists()
+    set_config(repo, verification={"gates": [{"name": "bad", "paths": ["src/*.ts"],
+                                               "cwd": "..", "argv": [sys.executable, "-V"]}]})
+    result = manual(repo, "src/app.ts", data_dir=data_dir)
+    assert result.returncode == 1 and "unavailable" in result.stdout
+
+
+def test_non_python_change_without_gate_is_unverified(repo: Path, data_dir: Path) -> None:
+    (repo / "src/app.ts").write_text("x\n")
+    result = manual(repo, "src/app.ts", data_dir=data_dir)
+    assert result.returncode == 1 and "non-Python" in result.stdout
+
+
+def test_mixed_language_change_without_gate_is_unverified(repo: Path, data_dir: Path) -> None:
+    (repo / "src/app.ts").write_text("x\n")
+    result = manual(repo, "src/pkg/mathx.py", "src/app.ts", data_dir=data_dir)
+    assert result.returncode == 1 and "src/app.ts" in result.stdout

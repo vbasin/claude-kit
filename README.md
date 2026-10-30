@@ -36,7 +36,7 @@ One shared source for the Claude Code setup used across my repos (ML_analytics, 
 
 Or open Claude Code in the new repo after step 1 and run `/kit:adopt`, which walks through all of it.
 
-**Private repo access:** this repo is private, so the machine running Claude Code needs git credentials for it. On the OCI VM, `gh auth login` followed by `gh auth setup-git` is enough. If the VM has no GitHub SSH key, also set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1`.
+**Private repo access:** if the marketplace is private, the machine running Claude Code needs git credentials for it. On the OCI VM, `gh auth login` followed by `gh auth setup-git` is enough. If the VM has no GitHub SSH key, also set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1`.
 
 ## Updating
 
@@ -84,7 +84,7 @@ A repo points `deliver` at its own gates and reviewers in `.claude/kit.json`:
 | PostToolUse (Edit/Write) | `post_edit.py` | Remembers the edited file and lints it at once |
 | Stop | `stop_verify.py` | Lints the session's changed `.py` files and runs all discovered tests for source changes, and directly related tests for test-only changes, as explicit paths. On failure it sends the output back so Claude keeps working. If Claude stops again with the same failure, it lets the stop through with a notice, so a pre-existing failure can't trap a session |
 
-Tests are picked per changed file, deleted files included: its own test file, `test_<module>*.py`, test files that import the module or name it in a patch target, and for a `conftest.py` the test files beneath it, up to `tests.max_files`. Each run starts with an empty bytecode cache, and an interpreter without pytest counts as a failure rather than a pass. A repo can add guard patterns in `.claude/kit.json`:
+Without explicit verification gates, source changes run all configured Python test files; test-only changes use related files up to `tests.max_files`, with capped or excluded files reported as incomplete. Deleted files are included. Each run starts with an empty bytecode cache, and an interpreter without pytest counts as a failure rather than a pass. A repo can add guard patterns in `.claude/kit.json`:
 
 ```json
 "guards": { "patterns": [ { "regex": "databento.*(download|get_range)", "reason": "Check the data cost first", "decision": "ask" } ] }
@@ -92,7 +92,7 @@ Tests are picked per changed file, deleted files included: its own test file, `t
 
 ## Does the kit help?
 
-`plugins/kit/evals/` is an eight-case `claude plugin eval` suite. Every case runs with the
+`plugins/kit/evals/` is an eleven-case `claude plugin eval` suite. Every case runs with the
 plugin and again with no plugin at all, so the number it reports is **Δ** — what the kit
 contributed, not what the model would have done anyway.
 
@@ -102,6 +102,9 @@ claude plugin eval ./plugins/kit --ablation with-without
 
 | Case | Claim it can falsify |
 |---|---|
+| `task-first` | A suitable existing tool completes the user's task before optional kit improvements |
+| `capability-required` | A missing task-critical capability is obtained or built during the task |
+| `reusable-capability` | A repeated gap leads to a tested reusable candidate |
 | `design-not-handed-back` | The design is Claude's to settle, by comparing rivals against stated criteria |
 | `obvious-fix-stays-cheap` | The kit doesn't charge design ceremony for a one-line fix |
 | `duplication-is-a-defect` | Duplication and dead config are reportable defects, named at their location |
@@ -115,7 +118,7 @@ claude plugin eval ./plugins/kit --ablation with-without
 because every always-on token the kit adds is paid on trivial prompts too. A suite made
 only of cases the kit is designed to win would never report that.
 
-The suite spends plan usage — 8 cases × 3 runs × 2 arms is 48 agent runs — so it is run by
+The suite spends plan usage — 11 cases × 3 runs × 2 arms is 66 agent runs — so it is run by
 hand, not in CI, which would need an `ANTHROPIC_API_KEY` a subscription doesn't provide.
 `python -m pytest tests/test_evals.py` checks the suite's schema for free.
 [`plugins/kit/evals/README.md`](plugins/kit/evals/README.md) covers the dials and how to
@@ -138,3 +141,108 @@ isn't one.
 ## Background
 
 The research and plan behind this setup are in [docs/PLAN.md](docs/PLAN.md).
+
+## Language-neutral verification gates
+
+For projects with a trusted, scoped test target, enable `verification` in `.claude/kit.json`:
+
+```json
+"verification": {
+  "enabled": true,
+  "gates": [
+    {"name": "web-tests", "paths": ["web/**"], "argv": ["npm", "test", "--", "--run"], "timeout_s": 300},
+    {"name": "api-tests", "paths": ["api/**"], "argv": ["make", "test-api"], "timeout_s": 300}
+  ]
+}
+```
+
+Every changed path must match a gate. Commands run as argument arrays without a shell;
+`cwd` is optional and must remain within the repository. Gates replace automatic pytest
+selection when enabled; Python lint settings still apply. Gate coverage is a repo contract:
+include affected integration tests and shared configuration paths. Test commands execute
+with the user's privileges. The manual verifier and Stop hook use the same gate runner.
+
+## Learning reusable skills
+
+`/kit:improve` turns a recurring gap into a candidate skill and evaluates it before
+promotion. Candidates contain `candidate.json` (name, purpose, applies_when, not_for,
+evidence) and `skill/SKILL.md`. Prepare a trusted, separate JSON suite such as:
+
+```json
+{"cases": [
+  {"name": "improvement", "fixture": "fixtures/improvement", "argv": ["python3", "check.py"]},
+  {"name": "regression", "fixture": "fixtures/regression", "argv": ["python3", "check.py"]}
+]}
+```
+
+Each check runs twice in fresh copies of its fixture: `KIT_CANDIDATE_DIR` is empty in the
+baseline arm and points to the candidate skill in the other arm. Exit 0 means the check
+passed. The suite must observe an improvement and preserve at least one baseline success without candidate failures. `learning.py
+promote` reruns the suite and refuses to overwrite an existing skill. Use only trusted
+suite commands; they execute with your privileges. Model-dependent behavioral evals and
+independent review remain necessary before releasing a shared skill.
+
+## Task-first workflow for Claude, Codex, and Grok
+
+Claude's `/kit:deliver` reads the shared portable protocol. To install that same protocol
+and its supporting scripts and review briefs into a target repository for Codex, Grok Build, or Claude Code:
+
+```bash
+python plugins/kit/scripts/install_portable.py --repo /path/to/project --host codex
+python plugins/kit/scripts/install_portable.py --repo /path/to/project --host grok
+python plugins/kit/scripts/install_portable.py --repo /path/to/project --host claude
+```
+
+Codex discovers the copy in `.agents/skills/kit-deliver`, Grok Build discovers its copy in
+`.grok/skills/kit-deliver`, and Claude Code can discover its copy in
+`.claude/skills/kit-deliver`. The installer leaves pre-existing unmanaged or modified skills
+alone; an unchanged managed installation is updated safely. Host trust, skill activation,
+hooks, permissions, available tools, and subagent behavior differ. Explicitly invoke the
+`kit-deliver` skill if it is not selected, and use a sequential fallback when a host lacks a
+capability. A bare model API needs a tool-capable host. No model parity is implied.
+
+For host-neutral repository checks, place the existing gate configuration in
+`.kit/kit.json`; `.claude/kit.json` takes precedence if both exist. Run
+`python <installed-skill>/scripts/stop_verify.py --manual <changed-file>` from the target
+repo. These are explicit commands on Codex and Grok; Claude's native hooks remain separate.
+
+For a necessary missing capability, search existing tools, research current sources, then
+adapt or build what is needed to finish the task. Record optional improvements without
+secrets using `<installed-skill>/scripts/backlog.py` and evaluate them **after** delivery.
+The default backlog lives in `~/.vtech-kit/learning.jsonl`, outside the target project.
+Use `backlog.py --help` to add, list, and resolve entries. Candidate evaluation and
+promotion use the bundled `scripts/learning.py`; a trusted independent suite is required.
+A validated host-neutral skill marked with `.kit-portable` in `plugins/kit/skills` is
+installed for Codex and Grok on the next installer run and is discoverable by the Claude
+plugin. Skills removed from the source are not automatically deleted from existing repos;
+review and remove outdated copies manually.
+
+For numeric comparisons, run `python <installed-skill>/scripts/score.py
+examples/seo-comparison.json`. Each criterion declares direction, bounds, weight and an
+optional hard threshold; every option needs a value and evidence for each criterion. An
+unknown value is incomplete, not zero. Weights and bounds are assumptions: scores describe
+those assumptions and cannot prove global optimality. The SEO file contains synthetic
+example data, not actual site or ranking results.
+
+### Native Codex and Grok integration
+
+For a repository where you want the portable workflow plus host-native integration:
+
+```bash
+python plugins/kit/scripts/install_native.py --repo /path/to/project --host codex
+python plugins/kit/scripts/install_native.py --repo /path/to/project --host grok
+```
+
+Run the appropriate command from a checkout of this kit. The installer appends a marked
+workflow block to the target repository's `AGENTS.md` and retains its existing content.
+It refuses to replace existing different hook or agent files or a modified kit block;
+reconcile them manually if the target project already has configuration. Review and trust
+Codex hooks through `/hooks`; Grok project hooks
+require `/hooks-trust`. Run `grok inspect` to inspect Grok discovery.
+
+Codex gets a SessionStart policy, a Bash guard, a verification Stop hook and four reviewer
+profiles. Grok gets its documented Bash deny hook and can use native subagents with the
+portable review briefs. Grok Stop hooks are passive, so the agent must explicitly verify
+before reporting. A guard configured as `ask` is not an enforceable approval prompt in
+these adapters; use the host's own permission controls. See the installed skill's
+`references/hosts.md` for availability, permissions, cloud-surface and validation limits.

@@ -7,7 +7,7 @@ argument-hint: "<what has to be decided>"
 Decide: $ARGUMENTS
 
 Arrive at the best approach, not the first workable one. You own this decision. Do not
-ask the user which design to take; the one thing worth asking about is in step 7.
+ask the user which design to take unless their preferences or requirements are essential.
 
 ## 1. Frame it once
 
@@ -23,8 +23,9 @@ Find out whether this is solved before designing it. In order, stopping when one
 1. **A decision already recorded.** Read the decision logs (`routing.decisions`, else
    the repo's own convention, else `.claude/decisions/`) before anything else. A past log
    gives you its criteria, its rejected candidates and, in its last section, the condition
-   that would reverse it. Check that condition: still false → cite the log and build what
-   it chose, without re-deriving it. Now true → say which condition changed, and carry the
+   that would reverse it. Check its evidence, assumptions, constraints and reversal conditions: if they still
+   apply → cite the log and build what it chose, without re-deriving it. A changed task,
+   dependency, measured outcome or relevant new evidence can also reopen the decision. Now true → say which condition changed, and carry the
    old candidates and objections into step 4 as the starting set rather than rediscovering
    them. This is the cheapest step here and the one most often skipped.
 2. Code in this repo that already does it or nearly does. Search; do not assume.
@@ -92,13 +93,13 @@ means you have converged.
 three rounds. On the third round choose anyway, and record the objection you could not
 resolve instead of hiding it.
 
-## 7. The one thing to ask the user
+## 7. Address missing capabilities
 
-If the deliberation shows a capability is missing — a skill, an agent or a rule that
-would materially change how this and later tasks go — propose it: what it would do, what
-it would cost (always-on context in every session of every repo, which
-`claude plugin details <plugin>` prices), and the case against it. That is a genuine
-choice and it belongs to the user.
+If a missing capability is necessary to finish this task, investigate existing options
+and create the smallest needed candidate now. If the current capability is adequate, record
+the improvement and use `improve` after completing and verifying the requested work. Name its costs, limits,
+and case against it. Promote only when the task authorizes shared changes and the candidate
+passes independent checks; otherwise report the candidate and next step.
 
 Everything else is yours. Which design, how to route it, which model, whether to work in
 a worktree: decide, and say what you decided.

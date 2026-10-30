@@ -6,7 +6,9 @@ argument-hint: "<what you want built, fixed or audited>"
 
 Deliver: $ARGUMENTS
 
-You own this task end to end. Decide the routing yourself and say what you chose in one line; do not ask the user to pick the tool.
+You own this task end to end. Read `${CLAUDE_PLUGIN_ROOT}/portable/kit-deliver/SKILL.md`
+and apply its task-first capability and scoring protocol. Decide the routing yourself and
+say what you chose in one line; do not ask the user to pick the tool.
 
 The repo's written rules are the floor, not the brief. Apply what a strong engineer
 applies without being asked, and say which of those standards bound this change. A prompt
@@ -90,7 +92,11 @@ Close with four lines: what changed, how it was verified (the commands and their
 
 ## Working out the harness as you go
 
-When the task shows the harness is missing something, say so in the report and offer it as a follow-up rather than silently widening the job:
+When a capability is necessary to deliver the task and none available fits, research,
+adapt or build the smallest useful capability immediately, and use it to finish the task.
+If an existing capability suffices, record optional improvement ideas and complete and
+verify the user's task first. Then use `improve` to evaluate useful reusable candidates
+within the authorized scope. Report any candidate you cannot validate:
 
 - A gate that does not exist for the area you changed → propose adding a scope.
 - The same correction given twice → propose a rule or a line in `CLAUDE.md`.
@@ -104,7 +110,7 @@ So when the thing you added is **not about this repo** — it names no path, no 
 service and no rule of this codebase, and you can describe what it does without saying
 which repo you were in — say in the report that it belongs in the kit, and what the case
 for it is. Moving it there makes every repo pay its always-on context
-(`claude plugin details <plugin>` prices that), so it is the user's call, not a quiet
-promotion. The same test run backwards is why most additions stay local: a skill that
+(`claude plugin details <plugin>` prices that), so promote only after evaluation and when the task authorizes work on the shared kit.
+Otherwise leave a concrete candidate and report what remains. The same test run backwards is why most additions stay local: a skill that
 encodes this repo's gates, its data contracts or its directory layout is worth more here
 and worth nothing anywhere else.

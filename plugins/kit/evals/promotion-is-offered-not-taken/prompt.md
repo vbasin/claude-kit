@@ -4,7 +4,7 @@ tags: [retention, ownership]
 max_turns: 10
 timeout_seconds: 360
 allowed_tools: [Read, Glob, Grep, Skill, TodoWrite, AskUserQuestion]
-expected_outcome: The generic one proposed for the shared plugin with its always-on cost and the decision left open; the repo-specific one stays local.
+expected_outcome: The generic one proposed for the shared plugin with its always-on cost and promotion conditional on validation and authorization; the repo-specific one stays local.
 ---
 
 I've finished the nightly ingest retry in our pipeline repo and the gate is green. Two
