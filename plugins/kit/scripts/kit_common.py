@@ -123,9 +123,10 @@ def load_config(root: Optional[Path], strict: bool = False) -> Dict[str, Any]:
             raise ValueError(f"Invalid kit configuration: {exc}") from exc
         return DEFAULT_CONFIG
     if strict and (not isinstance(user, dict) or any(
-        k in user and not isinstance(user[k], dict) for k in ("lint", "tests", "guards", "routing")
+        k in user and not isinstance(user[k], dict) for k in ("lint", "tests", "guards", "routing", "verification")
     )):
-        raise ValueError("Invalid kit configuration: expected objects for lint, tests, guards and routing")
+        raise ValueError("Invalid kit configuration: expected objects for lint, tests, "
+                         "guards, routing and verification")
     cfg = _merge(DEFAULT_CONFIG, user if isinstance(user, dict) else {})
     if strict:
         validate_verification_config(cfg)
@@ -290,19 +291,25 @@ def run(
     return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout, env=env)
 
 
-def run_lint(root: Path, python: str, args: List[str], files: List[str], timeout: int = 120) -> Optional[str]:
+def run_lint(root: Path, python: str, args: List[str], files: List[str], timeout: int = 120,
+             deadline: Optional[float] = None) -> Optional[str]:
     """Lint `files`; return the report on findings, None when clean or the linter is missing.
 
     `args` like ["-m", "ruff", ...] run under the repo's interpreter; if that interpreter
     lacks the module, fall back to the same tool as a standalone executable on PATH.
     """
     cmd = [python, *args, *files]
-    proc = run(cmd, root, timeout=timeout)
+    def remaining() -> float:
+        available = timeout if deadline is None else min(timeout, deadline - time.monotonic())
+        if available <= 0:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        return available
+    proc = run(cmd, root, timeout=remaining())
     if "No module named" in proc.stderr and len(args) >= 2 and args[0] == "-m":
         exe = shutil.which(args[1])
         if exe is None:
             return f"lint unavailable: {args[1]} is not installed"
-        proc = run([exe, *args[2:], *files], root, timeout=timeout)
+        proc = run([exe, *args[2:], *files], root, timeout=remaining())
     if proc.returncode == 0:
         return None
     return tail(proc.stdout + proc.stderr, max_lines=40)

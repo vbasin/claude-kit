@@ -27,9 +27,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from gates import run_gates
 from kit_common import (
     changed_since,
     dirty_files,
@@ -160,17 +162,19 @@ def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> 
     return selected[:cap], max(0, len(selected) - cap), len(omitted)
 
 
-def lint_files(root: Path, python: str, cfg: Dict[str, Any], files: List[str]) -> Optional[str]:
+def lint_files(root: Path, python: str, cfg: Dict[str, Any], files: List[str],
+               deadline: Optional[float] = None) -> Optional[str]:
     lint = cfg.get("lint", {})
     if not lint.get("enabled") or not files:
         return None
     try:
-        return run_lint(root, python, lint.get("args", []), files)
+        return run_lint(root, python, lint.get("args", []), files, deadline=deadline)
     except (OSError, subprocess.SubprocessError) as exc:
         return f"lint could not run: {exc}"
 
 
-def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str]) -> Optional[str]:
+def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str],
+              deadline: Optional[float] = None) -> Optional[str]:
     tcfg = cfg.get("tests", {})
     if not tcfg.get("enabled"):
         return None
@@ -182,8 +186,13 @@ def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str]) ->
     cache = tempfile.mkdtemp(prefix="kit-pycache-")
     env = {"PYTHONPYCACHEPREFIX": cache, "PYTHONDONTWRITEBYTECODE": "1", **(tcfg.get("env") or {})}
     try:
+        timeout = int(tcfg.get("timeout_s", 300))
+        if deadline is not None:
+            timeout = min(timeout, deadline - time.monotonic())
+            if timeout <= 0:
+                return "pytest incomplete: hook time budget exhausted"
         proc = run(
-            cmd, root, timeout=int(tcfg.get("timeout_s", 300)),
+            cmd, root, timeout=timeout,
             env_file=tcfg.get("env_file"), extra_env=env,
         )
     except subprocess.TimeoutExpired:
@@ -202,26 +211,38 @@ def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str]) ->
     return tail(proc.stdout + proc.stderr, max_lines=60)
 
 
-def verify(root: Path, cfg: Dict[str, Any], changed: List[str]) -> Tuple[List[str], List[str], int]:
+def verify(root: Path, cfg: Dict[str, Any], changed: List[str],
+           deadline: Optional[float] = None) -> Tuple[List[str], List[str], int]:
     """Return (failure sections, tests run, tests capped)."""
-    python = resolve_python(cfg, root)
     changed_py = [f for f in changed if f.endswith(".py")]
+    reserve = 120 if changed_py and cfg.get("lint", {}).get("enabled") else 0
+    gate_deadline = deadline - reserve if deadline is not None else None
+    gate_failures, _ = run_gates(root, cfg, changed, deadline=gate_deadline)
+    python = resolve_python(cfg, root)
     if not changed_py:
-        return [], [], 0
+        if changed and not cfg.get("verification", {}).get("enabled"):
+            return ["No configured verification gates cover these non-Python files."], [], 0
+        return gate_failures, [], 0
     if python is None:
-        if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")):
-            return [], [], 0
-        return [f"No interpreter from `python` in .claude/kit.json exists here ({cfg.get('python') or ['python3']}), "
+        needs_tests = cfg.get("tests", {}).get("enabled") and not cfg.get("verification", {}).get("enabled")
+        if not (cfg.get("lint", {}).get("enabled") or needs_tests):
+            return gate_failures, [], 0
+        return gate_failures + [f"No interpreter from `python` in .claude/kit.json exists here "
+                f"({cfg.get('python') or ['python3']}), "
                 "so lint and tests did not run. Create it, add a fallback such as \"python3\", or "
                 "disable lint and tests."], [], 0
-    failures: List[str] = []
-    lint_out = lint_files(root, python, cfg, [f for f in changed_py if (root / f).is_file()])
+    failures: List[str] = list(gate_failures)
+    if not cfg.get("verification", {}).get("enabled"):
+        non_python = [f for f in changed if not f.endswith(".py")]
+        if non_python:
+            failures.append("No configured verification gates cover: " + ", ".join(non_python))
+    lint_out = lint_files(root, python, cfg, [f for f in changed_py if (root / f).is_file()], deadline=deadline)
     if lint_out:
         failures.append(f"Lint ({' '.join(cfg['lint'].get('args', []))}):\n{lint_out}")
     tests: List[str] = []
     capped = 0
     excluded_count = 0
-    if cfg.get("tests", {}).get("enabled"):
+    if cfg.get("tests", {}).get("enabled") and not cfg.get("verification", {}).get("enabled"):
         tcfg = cfg.get("tests", {})
         tests, capped, excluded_count = find_tests(root, changed_py, tcfg)
         # Source changes can affect tests through indirect imports. Run all discovered
@@ -239,7 +260,8 @@ def verify(root: Path, cfg: Dict[str, Any], changed: List[str]) -> Tuple[List[st
         failures.append(f"Verification incomplete: {capped} test files were omitted by tests.max_files.")
     if excluded_count:
         failures.append(f"Verification incomplete: {excluded_count} test files were omitted by exclusions.")
-    test_out = run_tests(root, python, cfg, tests)
+    test_out = (run_tests(root, python, cfg, tests, deadline=deadline)
+                if not cfg.get("verification", {}).get("enabled") else None)
     if test_out:
         failures.append(f"Tests (pytest {' '.join(tests)}):\n{test_out}")
     return failures, tests, capped + excluded_count
@@ -254,6 +276,8 @@ def _digest(root: Path, files: List[str]) -> str:
 
 
 def hook_main() -> int:
+    # The configured hook limit is 480 seconds; leave time for setup and reporting.
+    deadline = time.monotonic() + 450
     data = read_input()
     session_id = str(data.get("session_id") or "")
     root = repo_root(data.get("cwd"))
@@ -268,16 +292,16 @@ def hook_main() -> int:
         else:
             emit({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": message}})
         return 0
-    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")):
+    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")
+            or cfg.get("verification", {}).get("enabled")):
         return 0
     state = load_state(session_id)
     changed = changed_since(root, state.get("baseline", {}), state.get("edited", []))
-    changed = [f for f in changed if f.endswith(".py")]
     if not changed:
         return 0
     digest = _digest(root, changed)
 
-    failures, tests, capped = verify(root, cfg, changed)
+    failures, tests, capped = verify(root, cfg, changed, deadline=deadline)
     if not failures:
         state["passed_digest"] = digest
         state.pop("failed_digest", None)
@@ -321,12 +345,14 @@ def manual_main(files: List[str]) -> int:
     print(f"kit verify: {len(py)} changed Python file(s); tests run: {' '.join(tests) or 'none'}")
     if capped:
         print(f"  ({capped} related test files not run; see omissions above)")
-    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")):
-        print("  lint and tests are disabled: add .claude/kit.json to this repo to enable them")
+    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")
+            or cfg.get("verification", {}).get("enabled")):
+        print("  no checks are enabled: add .claude/kit.json to this repo to enable them")
     if failures:
         print("\n\n".join(failures))
         return 1
-    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")):
+    if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")
+            or cfg.get("verification", {}).get("enabled")):
         print("kit verify: SKIPPED (no checks enabled)")
         return 2
     print("kit verify: OK")
