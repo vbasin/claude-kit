@@ -134,6 +134,22 @@ Scoped validation: **144 tests passed in 37.20 seconds** across
 passed. An independent read-only code review found no blocking regression.
 The full suite was not run.
 
+## PR #14 cancellation follow-up
+
+Copilot identified that Ctrl-C bypassed timeout-only cleanup after gates were
+detached into their own process group. The manual verifier could exit while a
+gate worker continued writing to the workspace. The cleanup handler now also
+catches `KeyboardInterrupt`, kills the group/tree, reaps the direct child, and
+re-raises the interrupt.
+
+Two real SIGINT regression cases reproduced the unwanted write before the fix:
+one with a live wrapper and one with an exited wrapper whose child retains its
+output pipes. Both pass after the fix. Tests release the worker only after the
+verifier exits and clean up their process groups even on assertion failure.
+Scoped `tests/test_hooks.py` and `tests/test_native.py` checks, Ruff on changed
+Python files, and `git diff --check` passed. An independent read-only review found
+no blocking issue. Windows cancellation behavior remains unverified.
+
 ## Local evidence
 
 The operator's smoke repositories and raw transcripts are under

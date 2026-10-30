@@ -320,6 +320,56 @@ def test_invalid_verification_enabled_never_reports_success(repo: Path, data_dir
     assert "verification.enabled must be a boolean" in first["hookSpecificOutput"]["additionalContext"]
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX SIGINT and process-group cleanup")
+@pytest.mark.parametrize("wrapper_exits", [False, True])
+def test_cancelled_manual_gate_stops_descendants(repo: Path, data_dir: Path, wrapper_exits: bool) -> None:
+    import signal
+    import time
+    from contextlib import suppress
+
+    worker = (
+        "import pathlib,time\n"
+        "pathlib.Path('worker-started').write_text('ready')\n"
+        "while not pathlib.Path('release-worker').exists(): time.sleep(0.02)\n"
+        "pathlib.Path('late-worker-write').write_text('leaked')\n"
+    )
+    wrapper = (
+        "import os,pathlib,subprocess,sys,time; "
+        "pathlib.Path('gate-pgid').write_text(str(os.getpgrp())); "
+        f"subprocess.Popen([sys.executable, '-c', {worker!r}]); "
+        + ("pass" if wrapper_exits else "time.sleep(30)")
+    )
+    set_config(repo, lint={"enabled": False}, verification={"enabled": True, "gates": [
+        {"name": "worker", "paths": ["*.py"], "argv": [sys.executable, "-c", wrapper], "timeout_s": 30},
+    ]})
+    proc = subprocess.Popen(
+        [sys.executable, str(SCRIPTS / "stop_verify.py"), "--manual", "src/pkg/mathx.py"],
+        cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
+        env={**os.environ, "CLAUDE_PLUGIN_DATA": str(data_dir)},
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not (repo / "worker-started").exists() and proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert (repo / "worker-started").exists(), "gate worker never became ready"
+        proc.send_signal(signal.SIGINT)
+        stdout, stderr = proc.communicate(timeout=3)
+        assert proc.returncode != 0 and "KeyboardInterrupt" in stderr
+        assert "kit verify: OK" not in stdout
+        (repo / "release-worker").write_text("continue if still alive")
+        time.sleep(0.5)
+        assert not (repo / "late-worker-write").exists(), "cancelled gate worker kept writing"
+    finally:
+        # Clean up even when the regression fails against the old implementation.
+        pgid_file = repo / "gate-pgid"
+        if pgid_file.exists():
+            with suppress(ProcessLookupError):
+                os.killpg(int(pgid_file.read_text()), signal.SIGKILL)
+        if proc.poll() is None:
+            proc.kill()
+        proc.communicate(timeout=3)
+
+
 def test_gate_mode_does_not_require_project_python(repo: Path, data_dir: Path) -> None:
     set_config(repo, python=["nonexistent-python-kit"], lint={"enabled": False},
                verification={"enabled": True, "gates": [{"name": "external", "paths": ["*.py"],

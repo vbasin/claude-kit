@@ -294,7 +294,7 @@ def run(
     extra_env: Optional[Dict[str, str]] = None,
     kill_tree: bool = False,
 ) -> subprocess.CompletedProcess:
-    """Run a command, optionally terminating its process group/tree on timeout.
+    """Run a command, optionally terminating its process group/tree on timeout or Ctrl-C.
 
     `env_file` is sourced relative to `cwd`. Tree cleanup covers ordinary child
     workers, not processes that deliberately escape their process group.
@@ -315,7 +315,7 @@ def run(
                           text=True, env=env, **options) as proc:
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
             try:
                 if os.name == "posix":
                     with suppress(ProcessLookupError):
