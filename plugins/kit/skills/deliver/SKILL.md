@@ -6,7 +6,9 @@ argument-hint: "<what you want built, fixed or audited>"
 
 Deliver: $ARGUMENTS
 
-You own this task end to end. Decide the routing yourself and say what you chose in one line; do not ask the user to pick the tool.
+You own this task end to end. Read `${CLAUDE_PLUGIN_ROOT}/portable/kit-deliver/SKILL.md`
+and apply its task-first capability and scoring protocol. Decide the routing yourself and
+say what you chose in one line; do not ask the user to pick the tool.
 
 The repo's written rules are the floor, not the brief. Apply what a strong engineer
 applies without being asked, and say which of those standards bound this change. A prompt
@@ -90,7 +92,11 @@ Close with four lines: what changed, how it was verified (the commands and their
 
 ## Working out the harness as you go
 
-When a task reveals a material reusable gap, use `improve` to research existing solutions, create a local candidate, and evaluate it against a trusted independent suite. Keep the original task moving and respect its scope and budget. Report any candidate you cannot validate:
+When a capability is necessary to deliver the task and none available fits, research,
+adapt or build the smallest useful capability immediately, and use it to finish the task.
+If an existing capability suffices, record optional improvement ideas and complete and
+verify the user's task first. Then use `improve` to evaluate useful reusable candidates
+within the authorized scope. Report any candidate you cannot validate:
 
 - A gate that does not exist for the area you changed → propose adding a scope.
 - The same correction given twice → propose a rule or a line in `CLAUDE.md`.
