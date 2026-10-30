@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import fnmatch
 import subprocess
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from kit_common import run, tail
 
 
-def run_gates(root: Path, config: Dict[str, Any], changed: List[str]) -> Tuple[List[str], List[str]]:
+def run_gates(root: Path, config: Dict[str, Any], changed: List[str],
+              deadline: Optional[float] = None) -> Tuple[List[str], List[str]]:
     profile = config.get("verification", {})
     if not isinstance(profile, dict):
         return ["verification must be an object"], []
@@ -37,12 +39,18 @@ def run_gates(root: Path, config: Dict[str, Any], changed: List[str]) -> Tuple[L
         if not matches:
             continue
         covered.update(matches)
-        cwd = (root / gate.get("cwd", ".")).resolve()
         try:
+            cwd = (root / gate.get("cwd", ".")).resolve()
             cwd.relative_to(root.resolve())
             timeout = int(gate.get("timeout_s", 300))
             if timeout <= 0:
                 raise ValueError("timeout must be positive")
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    failures.append(f"Gate {name} incomplete: hook time budget exhausted")
+                    continue
+                timeout = min(timeout, remaining)
             result = run(argv, cwd, timeout)
             ran.append(name)
             if result.returncode:

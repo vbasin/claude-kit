@@ -20,6 +20,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "plugins" / "kit" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from bash_guard import check, is_full_suite  # noqa: E402
+from gates import run_gates  # noqa: E402
 from stop_verify import find_tests  # noqa: E402
 
 PY_CANDIDATES = [".venv/bin/python"]
@@ -206,13 +207,13 @@ def test_guard_hook_output(repo: Path, data_dir: Path) -> None:
 
 # ── test selection ─────────────────────────────────────────────────────────────
 def test_find_tests_by_name_and_import(repo: Path) -> None:
-    tests, capped = find_tests(repo, ["src/pkg/mathx.py"], {"test_dirs": ["tests"], "import_roots": ["src"]})
+    tests, capped, _ = find_tests(repo, ["src/pkg/mathx.py"], {"test_dirs": ["tests"], "import_roots": ["src"]})
     assert tests == ["tests/test_mathx.py", "tests/test_uses_import.py"]
     assert capped == 0
 
 
 def test_find_tests_changed_test_file_and_cap(repo: Path) -> None:
-    tests, capped = find_tests(
+    tests, capped, _ = find_tests(
         repo, ["tests/test_unrelated.py", "src/pkg/mathx.py"], {"test_dirs": ["tests"], "max_files": 2}
     )
     assert tests == ["tests/test_unrelated.py", "tests/test_mathx.py"]
@@ -225,7 +226,7 @@ def test_find_tests_multiline_import_and_patch_target(repo: Path) -> None:
         "import pkg\nfrom unittest import mock\n\nTARGET = mock.patch('pkg.other.other')\n"
     )
     (repo / "tests" / "test_decoy.py").write_text("import json\nNAME = 'other.csv'\n")
-    tests, _ = find_tests(repo, ["src/pkg/other.py"], {"test_dirs": ["tests"], "import_roots": ["src"]})
+    tests, _, _ = find_tests(repo, ["src/pkg/other.py"], {"test_dirs": ["tests"], "import_roots": ["src"]})
     assert tests == ["tests/test_grouped.py", "tests/test_patched.py"]
 
 
@@ -233,19 +234,76 @@ def test_find_tests_for_conftest(repo: Path) -> None:
     (repo / "tests" / "sub").mkdir()
     (repo / "tests" / "sub" / "test_inner.py").write_text("def test_inner():\n    pass\n")
     cfg = {"test_dirs": ["tests"]}
-    tests, _ = find_tests(repo, ["tests/sub/conftest.py"], cfg)
+    tests, _, _ = find_tests(repo, ["tests/sub/conftest.py"], cfg)
     assert tests == ["tests/sub/test_inner.py"]
-    tests, _ = find_tests(repo, ["tests/conftest.py"], cfg)
+    tests, _, _ = find_tests(repo, ["tests/conftest.py"], cfg)
     assert set(tests) == {
         "tests/sub/test_inner.py", "tests/test_mathx.py", "tests/test_unrelated.py", "tests/test_uses_import.py",
     }
 
 
 def test_find_tests_exclude(repo: Path) -> None:
-    tests, _ = find_tests(
+    tests, _, _ = find_tests(
         repo, ["src/pkg/mathx.py"], {"test_dirs": ["tests"], "import_roots": ["src"], "exclude": ["tests/test_uses_*"]}
     )
     assert tests == ["tests/test_mathx.py"]
+
+
+def test_excluded_changed_test_is_reported(repo: Path, data_dir: Path) -> None:
+    set_config(repo, lint={"enabled": False}, tests={"exclude": ["tests/test_unrelated.py"]})
+    result = manual(repo, "tests/test_mathx.py", "tests/test_unrelated.py", data_dir=data_dir)
+    assert result.returncode == 1
+    assert "1 test files were omitted by exclusions" in result.stdout
+
+
+def test_bad_gate_cwd_does_not_skip_other_gates(repo: Path) -> None:
+    gates = [{"name": "bad", "paths": ["*.py"], "argv": [sys.executable, "-c", "pass"], "cwd": None},
+             {"name": "good", "paths": ["*.py"], "argv": [sys.executable, "-c", "pass"]}]
+    failures, ran = run_gates(repo, {"verification": {"enabled": True, "gates": gates}}, ["x.py"])
+    assert any("Gate bad unavailable" in f for f in failures)
+    assert ran == ["good"]
+
+
+def test_gate_deadline_reports_unstarted_checks(repo: Path) -> None:
+    import time
+    gates = [{"name": "slow", "paths": ["*.py"], "argv": [sys.executable, "-c", "import time; time.sleep(2)"]},
+             {"name": "later", "paths": ["*.py"], "argv": [sys.executable, "-c", "pass"]}]
+    failures, _ = run_gates(repo, {"verification": {"enabled": True, "gates": gates}}, ["x.py"],
+                            deadline=time.monotonic() + 0.1)
+    assert any("Gate slow unavailable" in f for f in failures)
+    assert any("Gate later incomplete" in f for f in failures)
+
+
+def test_gate_mode_does_not_require_project_python(repo: Path, data_dir: Path) -> None:
+    set_config(repo, python=["nonexistent-python-kit"], lint={"enabled": False},
+               verification={"enabled": True, "gates": [{"name": "external", "paths": ["*.py"],
+                              "argv": [sys.executable, "-c", "pass"]}]})
+    result = manual(repo, "src/pkg/mathx.py", data_dir=data_dir)
+    assert result.returncode == 0, result.stdout
+
+
+def test_overlapping_test_dirs_run_each_file_once(repo: Path, data_dir: Path) -> None:
+    (repo / "tests" / "sub").mkdir()
+    (repo / "tests" / "sub" / "test_once.py").write_text("def test_once(): pass\n")
+    set_config(repo, lint={"enabled": False}, tests={"test_dirs": ["tests", "tests/sub"]})
+    result = manual(repo, "src/pkg/mathx.py", data_dir=data_dir)
+    assert result.returncode == 0, result.stdout
+    summary = result.stdout.split("tests run:", 1)[1].splitlines()[0]
+    assert summary.count("tests/sub/test_once.py") == 1
+
+
+@pytest.mark.parametrize("settings", [
+    {"test_dirs": None}, {"max_files": 0}, {"timeout_s": "300"},
+    {"env": {"KEY": 1}}, {"pytest_args": "-q"},
+])
+def test_invalid_nested_settings_are_reported(repo: Path, data_dir: Path, settings: dict) -> None:
+    set_config(repo, tests=settings)
+    result = manual(repo, "tests/test_mathx.py", data_dir=data_dir)
+    assert result.returncode == 2 and "Invalid kit configuration" in result.stdout
+    base = {"session_id": "bad-settings", "cwd": str(repo)}
+    assert "additionalContext" in hook("stop_verify.py", base, data_dir)["hookSpecificOutput"]
+    retry = hook("stop_verify.py", {**base, "stop_hook_active": True}, data_dir)
+    assert "unverified" in retry["systemMessage"] and "hookSpecificOutput" not in retry
 
 
 # ── session flow ───────────────────────────────────────────────────────────────
