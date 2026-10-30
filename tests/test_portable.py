@@ -66,6 +66,7 @@ def test_installed_skill_runs_real_repo_gate(tmp_path, host, folder):
     assert install_portable.install(tmp_path, host) == "unchanged"
     skill = tmp_path / folder / "skills/kit-deliver"
     assert (skill / "scripts/learning.py").is_file()
+    assert (skill / "references/learning.md").is_file()
     (tmp_path / ".kit").mkdir()
     (tmp_path / ".kit/kit.json").write_text(json.dumps({"verification": {"enabled": True, "gates": [
         {"name": "web", "paths": ["web/*"], "argv": [sys.executable, "-c", "raise SystemExit(0)"]}

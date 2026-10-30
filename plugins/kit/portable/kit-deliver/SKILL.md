@@ -6,6 +6,7 @@ description: Complete a user-requested task with evidence-based decisions, exist
 # Complete the user's task
 
 For host-specific discovery and supported fallbacks, read `references/hosts.md` when needed.
+For candidate creation and post-task evaluation, read `references/learning.md` when needed.
 
 The user's requested result is the primary objective. Understand the goal, constraints,
 authority and acceptance checks. Work in the current repository and use its existing
