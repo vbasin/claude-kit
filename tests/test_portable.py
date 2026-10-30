@@ -138,7 +138,7 @@ def test_promoted_portable_skill_is_reused_by_codex_and_grok(tmp_path, monkeypat
         "not_for": "non-web projects", "evidence": "independent fixture",
     }))
     (candidate / "skill/SKILL.md").write_text(
-        "---\nname: seo-audit\ndescription: Audit website metadata\n---\nAudit canonical tags.\n"
+        "---\nname: \"seo-audit\"\ndescription: Audit website metadata\n---\nAudit canonical tags.\n"
     )
     (candidate / "skill/.kit-portable").write_text("")
     suite = tmp_path / "suite"

@@ -52,8 +52,16 @@ def sources() -> List[Tuple[str, Path, bool]]:
             raise ValueError(f"invalid portable skill directory: {skill}")
         text = (skill / "SKILL.md").read_text(encoding="utf-8")
         frontmatter = text.split("---\n", 2)
-        if (len(frontmatter) < 3 or frontmatter[0] != ""
-                or not re.search(rf"^name:\s*{re.escape(skill.name)}\s*$", frontmatter[1], re.M)):
+        names = []
+        if len(frontmatter) >= 3 and frontmatter[0] == "":
+            for line in frontmatter[1].splitlines():
+                key, sep, value = line.partition(":")
+                if sep and key.strip() == "name":
+                    value = value.split("#", 1)[0].strip()
+                    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                        value = value[1:-1]
+                    names.append(value)
+        if names != [skill.name]:
             raise ValueError(f"portable skill name must match its directory: {skill}")
         if skill.name == "kit-deliver":
             raise ValueError("portable skill conflicts with kit-deliver")
