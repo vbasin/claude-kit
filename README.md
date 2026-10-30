@@ -223,3 +223,26 @@ optional hard threshold; every option needs a value and evidence for each criter
 unknown value is incomplete, not zero. Weights and bounds are assumptions: scores describe
 those assumptions and cannot prove global optimality. The SEO file contains synthetic
 example data, not actual site or ranking results.
+
+### Native Codex and Grok integration
+
+For a repository where you want the portable workflow plus host-native integration:
+
+```bash
+python plugins/kit/scripts/install_native.py --repo /path/to/project --host codex
+python plugins/kit/scripts/install_native.py --repo /path/to/project --host grok
+```
+
+Run the appropriate command from a checkout of this kit. The installer appends a marked
+workflow block to the target repository's `AGENTS.md` and retains its existing content.
+It refuses to replace existing different hook or agent files or a modified kit block;
+reconcile them manually if the target project already has configuration. Review and trust
+Codex hooks through `/hooks`; Grok project hooks
+require `/hooks-trust`. Run `grok inspect` to inspect Grok discovery.
+
+Codex gets a SessionStart policy, a Bash guard, a verification Stop hook and four reviewer
+profiles. Grok gets its documented Bash deny hook and can use native subagents with the
+portable review briefs. Grok Stop hooks are passive, so the agent must explicitly verify
+before reporting. A guard configured as `ask` is not an enforceable approval prompt in
+these adapters; use the host's own permission controls. See the installed skill's
+`references/hosts.md` for availability, permissions, cloud-surface and validation limits.

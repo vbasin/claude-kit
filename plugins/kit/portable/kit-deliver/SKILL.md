@@ -68,6 +68,12 @@ the limits of self-review. Run applicable verification on the final result; repo
 relevant checks and tools take priority over building a duplicate. Record genuinely useful
 follow-up opportunities without exposing secrets or changing the original task's scope.
 
+On Codex, when installed and permitted, use `kit_design_critic`, `kit_reviewer`,
+`kit_security_reviewer`, or `kit_test_runner` for independent work as relevant. On Grok,
+use an available independent subagent with the matching `references/reviewers/` brief.
+Do not assume a subagent was launched or a hook ran; use a sequential review if necessary.
+Grok's documented Stop hook is passive: run verification explicitly before reporting.
+
 When installed into a repo, `scripts/stop_verify.py --manual` runs configured verification
 gates and `scripts/learning.py` evaluates skill candidates using a trusted fixture suite.
 Use the existing plugin equivalents when those installed scripts are unavailable. After
