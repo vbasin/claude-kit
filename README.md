@@ -185,7 +185,7 @@ independent review remain necessary before releasing a shared skill.
 ## Task-first workflow for Claude, Codex, and Grok
 
 Claude's `/kit:deliver` reads the shared portable protocol. To install that same protocol
-and its supporting scripts into a target repository for Codex, Grok Build, or Claude Code:
+and its supporting scripts and review briefs into a target repository for Codex, Grok Build, or Claude Code:
 
 ```bash
 python plugins/kit/scripts/install_portable.py --repo /path/to/project --host codex

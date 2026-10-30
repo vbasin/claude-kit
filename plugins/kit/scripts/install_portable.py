@@ -23,6 +23,14 @@ SKILLS = PLUGIN / "skills"
 MARKER = ".kit-portable"
 MANIFEST = ".kit-installed.json"
 RUNTIME_SCRIPTS = ("kit_common.py", "gates.py", "stop_verify.py", "learning.py")
+REVIEW_REFERENCES = {
+    "design-critic.md": PLUGIN / "agents/design-critic.md",
+    "reviewer.md": PLUGIN / "agents/reviewer.md",
+    "security-reviewer.md": PLUGIN / "agents/security-reviewer.md",
+    "test-runner.md": PLUGIN / "agents/test-runner.md",
+    "causality-reviewer.md": PLUGIN.parent / "quant/agents/causality-reviewer.md",
+    "query-reviewer.md": PLUGIN.parent / "quant/agents/query-reviewer.md",
+}
 HOST_PATHS = {"codex": ".agents/skills", "grok": ".grok/skills", "claude": ".claude/skills"}
 NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -90,6 +98,8 @@ def install(repo: Path, host: str) -> str:
             for script in RUNTIME_SCRIPTS:
                 path = Path(__file__).resolve().parent / script
                 hashes[f"scripts/{script}"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            for brief, path in REVIEW_REFERENCES.items():
+                hashes[f"references/reviewers/{brief}"] = hashlib.sha256(path.read_bytes()).hexdigest()
         if target.exists():
             if not target.is_dir():
                 raise ValueError("skill destination is not a directory")
@@ -112,6 +122,10 @@ def install(repo: Path, host: str) -> str:
             if include_runtime:
                 for script in RUNTIME_SCRIPTS:
                     shutil.copy2(Path(__file__).resolve().parent / script, staged / "scripts" / script)
+                reviews = staged / "references" / "reviewers"
+                reviews.mkdir(parents=True, exist_ok=True)
+                for brief, path in REVIEW_REFERENCES.items():
+                    shutil.copy2(path, reviews / brief)
             (staged / MANIFEST).write_text(json.dumps({"files": hashes}, indent=2) + "\n", encoding="utf-8")
             backup = parent / f".kit-backup-{uuid.uuid4().hex}"
             moved_old = False

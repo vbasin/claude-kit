@@ -49,7 +49,9 @@ estimates and unknowns. Use the bundled `scripts/score.py` only when numeric mea
 bounds, weights, and evidence are meaningful. A calculated score cannot establish global
 optimality or replace a test. Have an independent reviewer challenge substantial choices
 when the host supports it; otherwise critique the criteria, alternatives and evidence
-in this session. Avoid ceremony for obvious edits.
+in this session. Installed portable skills include `references/reviewers/design-critic.md`
+and other review briefs; treat host-specific frontmatter as advisory. The Claude plugin
+can use its native critic and reviewers. Avoid ceremony for obvious edits.
 
 For SEO, distinguish measured technical checks (for example, indexability and metadata)
 from traffic or ranking outcomes that require later observation. Do not guarantee rankings.
@@ -59,8 +61,10 @@ from traffic or ranking outcomes that require later observation. Do not guarante
 Choose the most efficient available host tools; use a single worker for dependent work,
 parallel work only when independent and authorized, and isolated checkouts for parallel
 writers. Use host-native features when available and a sequential fallback otherwise.
-Follow repository instructions and user preferences. Run applicable verification on the
-final result; report exactly what passed, failed, was unavailable, and remains. Existing
+Follow repository instructions and user preferences. For substantial changes use the
+installed reviewer briefs appropriate to the task, including security, SQL or causality
+when relevant; use independent reviewers if available and authorized, otherwise report
+the limits of self-review. Run applicable verification on the final result; report exactly what passed, failed, was unavailable, and remains. Existing
 relevant checks and tools take priority over building a duplicate. Record genuinely useful
 follow-up opportunities without exposing secrets or changing the original task's scope.
 

@@ -11,6 +11,11 @@ and permissions at runtime; never assume the presence of another host's commands
 
 Grok Build also documents Claude plugin compatibility and an `.agents/skills` discovery
 path, but native Grok and Codex installations here use their documented workspace roots.
+Portable installations include shared reviewer briefs in `references/reviewers/`, including
+quantitative causality and query reviews. Host-native tools and isolation still vary; use a
+fresh reviewer when available and authorized, and otherwise apply the briefs with an honest
+self-review limitation.
+
 A model API alone does not load these instructions or execute scripts; it needs a host with
 filesystem and tool access. If a capability is absent, use available sequential tools, and
 report checks that cannot be run.
