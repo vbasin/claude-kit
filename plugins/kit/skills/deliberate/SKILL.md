@@ -92,13 +92,12 @@ means you have converged.
 three rounds. On the third round choose anyway, and record the objection you could not
 resolve instead of hiding it.
 
-## 7. The one thing to ask the user
+## 7. Address missing capabilities
 
-If the deliberation shows a capability is missing — a skill, an agent or a rule that
-would materially change how this and later tasks go — propose it: what it would do, what
-it would cost (always-on context in every session of every repo, which
-`claude plugin details <plugin>` prices), and the case against it. That is a genuine
-choice and it belongs to the user.
+If a missing capability would materially improve this task and future work, use `improve`
+to investigate existing options and evaluate a local candidate. Name its costs, limits,
+and case against it. Promote only when the task authorizes shared changes and the candidate
+passes independent checks; otherwise report the candidate and next step.
 
 Everything else is yours. Which design, how to route it, which model, whether to work in
 a worktree: decide, and say what you decided.

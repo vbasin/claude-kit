@@ -1,6 +1,6 @@
 # Does the kit actually help?
 
-Eight cases, each one a prompt the kit claims to handle better than a bare session. Every
+Nine cases, each one a prompt the kit claims to handle better than a bare session. Every
 case runs with the plugin and again with no plugin at all, and the number that matters is
 **Δ** — the with-arm score minus the without-arm score. A case that scores 1.0 in both
 arms is not evidence for the kit; it is evidence the model did it anyway.
@@ -18,7 +18,7 @@ claude plugin eval ./plugins/kit --ablation none --runs 2 --case obvious-fix-sta
 ```
 
 The suite uses your normal Claude Code credentials and counts against your plan's usage,
-so a full pass is 8 cases × 3 runs × 2 arms = **48 agent runs**, plus three short judge
+so a full pass is 9 cases × 3 runs × 2 arms = **54 agent runs**, plus three short judge
 calls per `llm` grader per run. `--runs 2` and `--case <glob>` are the two dials.
 Everything here is read-only: no `--allow-tools`, no `--scaffold`, no fixtures on disk —
 each prompt carries whatever the task needs, so the suite never touches a real repo.
@@ -53,6 +53,7 @@ read its Δ.
 
 | Case | The claim it can falsify | Read Δ as |
 |---|---|---|
+| `reusable-capability` | A repeated gap leads to a tested reusable candidate | Positive: the candidate workflow is used |
 | `design-not-handed-back` | The design is Claude's to settle, and it settles it by comparing rivals against stated criteria | Positive: the deliberation loop is doing work a bare session doesn't |
 | `obvious-fix-stays-cheap` | The kit doesn't charge design ceremony for a one-line fix | **Near zero is the pass.** Strongly negative means the kit is making trivial work expensive |
 | `duplication-is-a-defect` | Duplication and dead config are reportable defects, named at their location | Positive: the standards floor in `deliver` and `reviewer` is landing |

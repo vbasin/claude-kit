@@ -92,7 +92,7 @@ Tests are picked per changed file, deleted files included: its own test file, `t
 
 ## Does the kit help?
 
-`plugins/kit/evals/` is an eight-case `claude plugin eval` suite. Every case runs with the
+`plugins/kit/evals/` is a nine-case `claude plugin eval` suite. Every case runs with the
 plugin and again with no plugin at all, so the number it reports is **Δ** — what the kit
 contributed, not what the model would have done anyway.
 
@@ -158,3 +158,23 @@ Every changed path must match a gate. Commands run as argument arrays without a 
 selection when enabled; Python lint settings still apply. Gate coverage is a repo contract:
 include affected integration tests and shared configuration paths. Test commands execute
 with the user's privileges. The manual verifier and Stop hook use the same gate runner.
+
+## Learning reusable skills
+
+`/kit:improve` turns a recurring gap into a candidate skill and evaluates it before
+promotion. Candidates contain `candidate.json` (name, purpose, applies_when, not_for,
+evidence) and `skill/SKILL.md`. Prepare a trusted, separate JSON suite such as:
+
+```json
+{"cases": [
+  {"name": "improvement", "fixture": "fixtures/improvement", "argv": ["python3", "check.py"]},
+  {"name": "regression", "fixture": "fixtures/regression", "argv": ["python3", "check.py"]}
+]}
+```
+
+Each check runs twice in fresh copies of its fixture: `KIT_CANDIDATE_DIR` is empty in the
+baseline arm and points to the candidate skill in the other arm. Exit 0 means the check
+passed. The suite must observe an improvement and preserve at least one baseline success without candidate failures. `learning.py
+promote` reruns the suite and refuses to overwrite an existing skill. Use only trusted
+suite commands; they execute with your privileges. Model-dependent behavioral evals and
+independent review remain necessary before releasing a shared skill.
