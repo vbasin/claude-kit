@@ -1,4 +1,4 @@
-# claude-kit
+# vtech-kit
 
 One shared source for the Claude Code setup used across my repos (ML_analytics, Grok_Bot, and new builds). The repo is a **plugin marketplace** named `vtech-kit`. Each project turns its plugins on with a few lines in its own `.claude/settings.json`, so a change made here reaches every repo on its next update, without copying files around.
 
@@ -25,7 +25,7 @@ One shared source for the Claude Code setup used across my repos (ML_analytics, 
    ```json
    {
      "extraKnownMarketplaces": {
-       "vtech-kit": { "source": { "source": "github", "repo": "vbasin/claude-kit" } }
+       "vtech-kit": { "source": { "source": "github", "repo": "vbasin/vtech-kit" } }
      },
      "enabledPlugins": { "kit@vtech-kit": true, "quant@vtech-kit": true }
    }
