@@ -74,3 +74,32 @@ def test_improvement_alone_does_not_satisfy_regression_guard(tmp_path):
     suite.write_text(json.dumps(data))
     result = run("evaluate", candidate, "--suite", suite)
     assert result.returncode == 1 and not json.loads(result.stdout)["passed"]
+
+
+def test_cases_are_isolated_and_promotion_uses_snapshot(tmp_path):
+    candidate, suite = setup_candidate(tmp_path)
+    original = (candidate / "skill/SKILL.md").read_text()
+    (suite.parent / "improvement/check.py").write_text(
+        "import os, pathlib, sys\n"
+        "p = os.environ.get('KIT_CANDIDATE_DIR')\n"
+        "if not p: sys.exit(1)\n"
+        "(pathlib.Path(p) / 'cache').write_text('contamination')\n"
+        f"pathlib.Path({str(candidate / 'skill/SKILL.md')!r}).write_text('changed after snapshot')\n"
+    )
+    (suite.parent / "regression/check.py").write_text(
+        "import os, pathlib, sys\n"
+        "p = os.environ.get('KIT_CANDIDATE_DIR')\n"
+        "sys.exit(1 if p and (pathlib.Path(p) / 'cache').exists() else 0)\n"
+    )
+    target = tmp_path / "skills"
+    result = run("promote", candidate, "--suite", suite, "--destination", target)
+    assert result.returncode == 0, result.stderr
+    assert (target / "test-skill/SKILL.md").read_text() == original
+    assert not (target / "test-skill/cache").exists()
+
+
+def test_checks_can_emit_non_utf8_output(tmp_path):
+    candidate, suite = setup_candidate(tmp_path)
+    (suite.parent / "regression/check.py").write_text("import os\nos.write(1, b'\\xff')\n")
+    result = run("evaluate", candidate, "--suite", suite)
+    assert result.returncode == 0, result.stderr

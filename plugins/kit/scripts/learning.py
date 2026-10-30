@@ -68,10 +68,15 @@ def evaluate(candidate: Path, suite_path: Path) -> Dict[str, Any]:
                 work = Path(tmp) / "work"
                 shutil.copytree(fixture, work)
                 env = dict(os.environ)
-                env["KIT_CANDIDATE_DIR"] = str(candidate.resolve() / "skill") if enabled else ""
+                if enabled:
+                    skill_copy = Path(tmp) / "skill"
+                    shutil.copytree(candidate / "skill", skill_copy, symlinks=True)
+                    env["KIT_CANDIDATE_DIR"] = str(skill_copy)
+                else:
+                    env["KIT_CANDIDATE_DIR"] = ""
                 try:
-                    proc = subprocess.run(argv, cwd=str(work), env=env, capture_output=True,
-                                          text=True, timeout=timeout, check=False)
+                    proc = subprocess.run(argv, cwd=str(work), env=env, stdout=subprocess.DEVNULL,
+                                          stderr=subprocess.DEVNULL, timeout=timeout, check=False)
                 except (OSError, subprocess.SubprocessError) as exc:
                     raise ValueError(f"case {name} could not run: {exc}") from exc
                 exits.append(proc.returncode)
@@ -93,16 +98,20 @@ def main() -> int:
     parser.add_argument("--destination", type=Path, help="skill directory; required for promote")
     args = parser.parse_args()
     try:
-        result = evaluate(args.candidate, args.suite)
-        if args.action == "promote" and result["passed"]:
-            if args.destination is None:
-                raise ValueError("promote requires --destination")
-            target = args.destination / result["candidate"]
-            if target.exists() or target.is_symlink():
-                raise ValueError(f"destination already exists: {target}")
-            args.destination.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(args.candidate / "skill", target, symlinks=False)
-            result["promoted_to"] = str(target)
+        validate_candidate(args.candidate)
+        with tempfile.TemporaryDirectory(prefix="kit-candidate-") as tmp:
+            snapshot = Path(tmp) / "candidate"
+            shutil.copytree(args.candidate, snapshot, symlinks=True)
+            result = evaluate(snapshot, args.suite)
+            if args.action == "promote" and result["passed"]:
+                if args.destination is None:
+                    raise ValueError("promote requires --destination")
+                target = args.destination / result["candidate"]
+                if target.exists() or target.is_symlink():
+                    raise ValueError(f"destination already exists: {target}")
+                args.destination.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(snapshot / "skill", target, symlinks=False)
+                result["promoted_to"] = str(target)
         print(json.dumps(result, indent=2))
         return 0 if result["passed"] else 1
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:

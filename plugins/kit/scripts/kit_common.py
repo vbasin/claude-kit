@@ -80,6 +80,36 @@ def _merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def validate_verification_config(cfg: Dict[str, Any]) -> None:
+    """Validate settings consumed by the manual verifier and Stop hook."""
+    def strings(value: Any) -> bool:
+        return isinstance(value, list) and all(isinstance(v, str) for v in value)
+
+    python = cfg.get("python")
+    if not (isinstance(python, str) or strings(python)):
+        raise ValueError("Invalid kit configuration: python must be a string or list of strings")
+    for section in ("lint", "tests"):
+        if not isinstance(cfg[section].get("enabled"), bool):
+            raise ValueError(f"Invalid kit configuration: {section}.enabled must be a boolean")
+    for section, keys in (("lint", ("args",)),
+                          ("tests", ("test_dirs", "import_roots", "exclude", "pytest_args"))):
+        for key in keys:
+            if key in cfg[section] and not strings(cfg[section][key]):
+                raise ValueError(f"Invalid kit configuration: {section}.{key} must be a list of strings")
+    for key in ("max_files", "timeout_s"):
+        value = cfg["tests"].get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"Invalid kit configuration: tests.{key} must be a positive integer")
+    env = cfg["tests"].get("env")
+    if env is not None and (not isinstance(env, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in env.items()
+    )):
+        raise ValueError("Invalid kit configuration: tests.env must be an object of strings")
+    env_file = cfg["tests"].get("env_file")
+    if env_file is not None and not isinstance(env_file, str):
+        raise ValueError("Invalid kit configuration: tests.env_file must be a string or null")
+
+
 def load_config(root: Optional[Path], strict: bool = False) -> Dict[str, Any]:
     if root is None:
         return DEFAULT_CONFIG
@@ -97,7 +127,10 @@ def load_config(root: Optional[Path], strict: bool = False) -> Dict[str, Any]:
     )):
         raise ValueError("Invalid kit configuration: expected objects for lint, tests, "
                          "guards, routing and verification")
-    return _merge(DEFAULT_CONFIG, user if isinstance(user, dict) else {})
+    cfg = _merge(DEFAULT_CONFIG, user if isinstance(user, dict) else {})
+    if strict:
+        validate_verification_config(cfg)
+    return cfg
 
 
 def resolve_python(config: Dict[str, Any], root: Path) -> Optional[str]:
@@ -258,19 +291,25 @@ def run(
     return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout, env=env)
 
 
-def run_lint(root: Path, python: str, args: List[str], files: List[str], timeout: int = 120) -> Optional[str]:
+def run_lint(root: Path, python: str, args: List[str], files: List[str], timeout: int = 120,
+             deadline: Optional[float] = None) -> Optional[str]:
     """Lint `files`; return the report on findings, None when clean or the linter is missing.
 
     `args` like ["-m", "ruff", ...] run under the repo's interpreter; if that interpreter
     lacks the module, fall back to the same tool as a standalone executable on PATH.
     """
     cmd = [python, *args, *files]
-    proc = run(cmd, root, timeout=timeout)
+    def remaining() -> float:
+        available = timeout if deadline is None else min(timeout, deadline - time.monotonic())
+        if available <= 0:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        return available
+    proc = run(cmd, root, timeout=remaining())
     if "No module named" in proc.stderr and len(args) >= 2 and args[0] == "-m":
         exe = shutil.which(args[1])
         if exe is None:
             return f"lint unavailable: {args[1]} is not installed"
-        proc = run([exe, *args[2:], *files], root, timeout=timeout)
+        proc = run([exe, *args[2:], *files], root, timeout=remaining())
     if proc.returncode == 0:
         return None
     return tail(proc.stdout + proc.stderr, max_lines=40)
