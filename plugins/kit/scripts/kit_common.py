@@ -84,6 +84,8 @@ def load_config(root: Optional[Path], strict: bool = False) -> Dict[str, Any]:
     if root is None:
         return DEFAULT_CONFIG
     path = root / CONFIG_RELPATH
+    if not path.exists():
+        path = root / ".kit" / "kit.json"
     try:
         user = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:

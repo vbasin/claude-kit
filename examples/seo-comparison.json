@@ -1,0 +1,13 @@
+{
+  "criteria": [
+    {"name": "critical_technical_errors", "direction": "min", "lower": 0, "upper": 10, "weight": 3, "threshold": 0},
+    {"name": "audit_seconds", "direction": "min", "lower": 0, "upper": 120, "weight": 1}
+  ],
+  "options": [
+    {"name": "existing-tool", "metrics": {
+      "critical_technical_errors": {"value": 0, "evidence": "illustrative audit fixture"},
+      "audit_seconds": {"value": 20, "evidence": "illustrative timing fixture"}
+    }},
+    {"name": "unmeasured-new-tool", "metrics": {}}
+  ]
+}

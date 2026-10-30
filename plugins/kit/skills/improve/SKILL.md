@@ -6,6 +6,11 @@ argument-hint: "<observed gap or failure>"
 
 Improve the kit for: $ARGUMENTS
 
+The user's task comes first. If the missing capability is essential to complete it,
+research, adapt or build the smallest useful capability now and finish the task. Otherwise,
+record the opportunity and wait until the requested work is complete and verified before
+performing the following optional improvement cycle.
+
 1. Record the observed task and concrete failure or missing capability. Search the repo's
    existing skills, tools, decision records and validated local candidates before building.
    If current facts matter, research primary documentation and retain source URLs and dates.
@@ -15,7 +20,9 @@ Improve the kit for: $ARGUMENTS
 3. If a reusable skill is justified, create a local candidate directory containing
    `candidate.json` with string fields `name`, `purpose`, `applies_when`, `not_for`, and
    `evidence`, plus `skill/SKILL.md` and any needed supporting files. Keep it out of the
-   shared plugin until evaluated. Do not install or execute untrusted downloaded code.
+   shared plugin until evaluated. For a generic skill that is host-neutral, add an empty
+   `skill/.kit-portable` marker before evaluation. Avoid host-specific commands and tool
+   assumptions in the transferable skill. Do not install or execute untrusted downloaded code.
 4. Prepare or select a trusted independent suite outside the candidate. Each case supplies
    a small fixture and an argument-array check. The check receives `KIT_CANDIDATE_DIR`: it
    is empty for baseline and points to the skill for the candidate arm. Design a case that
@@ -29,6 +36,8 @@ Improve the kit for: $ARGUMENTS
    working checkout's `plugins/kit/skills`. Promotion reruns the suite and refuses to
    overwrite existing skills. Add meaningful integration or behavior evals, review the
    changes, and prepare a draft PR when the task and available permissions authorize it.
-   Repo-specific knowledge stays in the relevant repo. Do not alter a suite just to pass.
+   A marked, validated skill in `plugins/kit/skills` is discoverable by the portable
+   installer for Codex and Grok as well as by the Claude plugin. Repo-specific knowledge
+   stays in the relevant repo. Do not alter a suite just to pass.
 7. Report the candidate, evidence, test commands, limitations, and proposed release/rollback.
    Use a bounded budget; stop and report a blocked outcome when checks cannot be run.
