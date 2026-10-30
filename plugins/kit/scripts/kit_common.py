@@ -13,9 +13,11 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -91,6 +93,8 @@ def validate_verification_config(cfg: Dict[str, Any]) -> None:
     for section in ("lint", "tests"):
         if not isinstance(cfg[section].get("enabled"), bool):
             raise ValueError(f"Invalid kit configuration: {section}.enabled must be a boolean")
+    if not isinstance(cfg.get("verification", {}).get("enabled", False), bool):
+        raise ValueError("Invalid kit configuration: verification.enabled must be a boolean")
     for section, keys in (("lint", ("args",)),
                           ("tests", ("test_dirs", "import_roots", "exclude", "pytest_args"))):
         for key in keys:
@@ -285,11 +289,16 @@ def relative_to_root(root: Path, file_path: str) -> Optional[str]:
 def run(
     cmd: List[str],
     cwd: Path,
-    timeout: int,
+    timeout: float,
     env_file: Optional[str] = None,
     extra_env: Optional[Dict[str, str]] = None,
+    kill_tree: bool = False,
 ) -> subprocess.CompletedProcess:
-    """Run a command in `cwd`; source `env_file` (relative to `cwd`) first when it exists."""
+    """Run a command, optionally terminating its process group/tree on timeout or Ctrl-C.
+
+    `env_file` is sourced relative to `cwd`. Tree cleanup covers ordinary child
+    workers, not processes that deliberately escape their process group.
+    """
     if env_file:
         env_path = Path(env_file) if os.path.isabs(env_file) else Path(cwd) / env_file
         if env_path.is_file():
@@ -297,7 +306,31 @@ def run(
     env = dict(os.environ)
     for key, value in (extra_env or {}).items():
         env[str(key)] = str(value).replace("{root}", str(cwd))
-    return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout, env=env)
+    if not kill_tree:
+        return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout, env=env)
+    options = {"start_new_session": True} if os.name == "posix" else {
+        "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP,
+    }
+    with subprocess.Popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, env=env, **options) as proc:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+            try:
+                if os.name == "posix":
+                    with suppress(ProcessLookupError):
+                        os.killpg(proc.pid, signal.SIGKILL)
+                else:
+                    subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   timeout=5, check=False)
+            finally:
+                # Always reap the direct child, even if platform tree cleanup fails.
+                if proc.poll() is None:
+                    proc.kill()
+                proc.wait()
+            raise
+        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
 def run_lint(root: Path, python: str, args: List[str], files: List[str], timeout: int = 120,

@@ -81,8 +81,7 @@ def install(repo: Path, host: str) -> str:
         new = old
     else:
         new = old + ("\n\n" if old and not old.endswith("\n") else "\n" if old else "") + WORKFLOW + "\n"
-    install_portable.install(root, host)
-    created = False
+    created = install_portable.install(root, host) != "unchanged"
     for name, content in files.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
