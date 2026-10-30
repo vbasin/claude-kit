@@ -259,8 +259,15 @@ def changed_since(root: Path, baseline: Dict[str, Any], edited: Iterable[str]) -
         candidates = set(dirty_files(root, include_deleted=True)) | set(before)
         head = baseline.get("head")
         if head:
-            committed = git(["diff", "--name-only", "--no-renames", f"{head}..HEAD"], root) or ""
-            candidates.update(n for n in committed.splitlines() if n)
+            committed = git(["diff", "--name-only", "--no-renames", "-z", f"{head}..HEAD"], root) or ""
+            candidates.update(n for n in committed.split("\0") if n)
+        elif git(["rev-parse", "--verify", "HEAD"], root):
+            # A first commit appeared after an unborn-HEAD baseline. Compare its
+            # current tree with the baseline's pre-existing dirty files below.
+            committed = git(["ls-tree", "-r", "--name-only", "-z", "HEAD"], root)
+            if committed is None:
+                raise ValueError("Could not enumerate files committed since the session started")
+            candidates.update(n for n in committed.split("\0") if n)
         for name in candidates:
             if name not in before or before[name] != file_digest(root / name):
                 changed.add(name)

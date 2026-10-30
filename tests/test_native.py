@@ -62,6 +62,25 @@ def test_codex_start_stop_retry_and_reviewer_install(tmp_path):
     assert call_hook(repo, "codex", "stop", data, tmp_path) == {}
 
 
+def test_codex_stop_verifies_first_commit_in_new_repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".kit").mkdir()
+    (repo / ".kit/kit.json").write_text(json.dumps({"verification": {"enabled": True, "gates": [
+        {"name": "failure", "paths": ["*.txt"], "argv": [sys.executable, "-c", "raise SystemExit(1)"]}
+    ]}}))
+    install_native.install(repo, "codex")
+    data = {"cwd": str(repo), "session_id": "unborn"}
+    call_hook(repo, "codex", "start", data, tmp_path)
+    (repo / "new file.txt").write_text("new work")
+    subprocess.run(["git", "-C", str(repo), "add", "new file.txt"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=test", "-c", "user.email=t@t", "commit", "-qm", "first"],
+                   check=True)
+    result = call_hook(repo, "codex", "stop", data, tmp_path)
+    assert result["decision"] == "block" and "Gate failure failed" in result["reason"]
+
+
 @pytest.mark.parametrize("host,folder", [("codex", ".codex"), ("grok", ".grok")])
 def test_native_guard_deny_and_ask_contract(tmp_path, host, folder):
     repo = tmp_path / "repo"
