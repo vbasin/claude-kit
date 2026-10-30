@@ -33,20 +33,37 @@ REVIEW_REFERENCES = {
 }
 HOST_PATHS = {"codex": ".agents/skills", "grok": ".grok/skills", "claude": ".claude/skills"}
 NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+CACHE = re.compile(r"^(.+)\.cpython-\d+(?:\.opt-[12])?\.pyc$")
+
+
+def generated_bytecode(path: Path) -> bool:
+    """Recognize only bytecode for a neighboring Python source file."""
+    match = CACHE.fullmatch(path.name)
+    if not match or path.parent.name != "__pycache__":
+        return False
+    source = path.parent.parent / (match.group(1) + ".py")
+    return source.is_file() and not source.is_symlink()
 
 
 def file_hashes(folder: Path) -> Dict[str, str]:
     hashes = {}
+    cache_dirs = set()
     for path in sorted(folder.rglob("*")):
         if path.is_symlink():
             raise ValueError(f"symlinks are not supported: {path}")
-        if path.is_file() and path != folder / MANIFEST:
+        if path.is_dir() and "__pycache__" in path.relative_to(folder).parts[:-1]:
+            raise ValueError(f"unmanaged directory in bytecode cache: {path}")
+        if path.parent.name == "__pycache__" and path.is_file() and not generated_bytecode(path):
+            raise ValueError(f"unmanaged file in bytecode cache: {path}")
+        if path.is_file() and generated_bytecode(path):
+            cache_dirs.add(str(path.parent.relative_to(folder)))
+        elif path.is_file() and path != folder / MANIFEST:
             hashes[path.relative_to(folder).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
         elif not path.is_dir() and not path.is_file():
             raise ValueError(f"unsupported file type in skill: {path}")
     expected_dirs = {str(parent) for name in hashes for parent in Path(name).parents}
     for path in folder.rglob("*"):
-        if path.is_dir() and str(path.relative_to(folder)) not in expected_dirs:
+        if path.is_dir() and str(path.relative_to(folder)) not in expected_dirs | cache_dirs:
             raise ValueError(f"unmanaged directory in skill: {path}")
     return hashes
 
@@ -118,7 +135,9 @@ def install(repo: Path, host: str) -> str:
     for source, target, hashes, include_runtime in plans:
         with tempfile.TemporaryDirectory(prefix=".kit-install-", dir=str(parent)) as tmp:
             staged = Path(tmp) / target.name
-            shutil.copytree(source, staged)
+            # Generated caches are not part of the installed artifact. The validation
+            # above rejects any unexpected files in these directories first.
+            shutil.copytree(source, staged, ignore=shutil.ignore_patterns("__pycache__"))
             if include_runtime:
                 for script in RUNTIME_SCRIPTS:
                     shutil.copy2(Path(__file__).resolve().parent / script, staged / "scripts" / script)

@@ -78,7 +78,7 @@ def score(data: Dict[str, Any]) -> Dict[str, Any]:
         result = {"name": option["name"], "status": status, "missing": missing,
                   "failed_thresholds": failed, "metrics": details}
         if not missing:
-            result["score"] = round(100 * total / sum(c["weight"] for c in criteria), 2)
+            result["score"] = round((total / sum(c["weight"] for c in criteria)) * 100, 2)
         results.append(result)
     ranked = sorted((r for r in results if r["status"] == "eligible"), key=lambda r: -r["score"])
     return {"options": results, "ranked_eligible": [r["name"] for r in ranked]}

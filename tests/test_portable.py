@@ -59,6 +59,12 @@ def test_scoring_validates_inputs_and_does_not_invent_evidence():
         scorer.score(data)
 
 
+def test_score_large_finite_weight_does_not_overflow():
+    data = {"criteria": [{"name": "quality", "direction": "max", "lower": 0, "upper": 1, "weight": 1e307}],
+            "options": [{"name": "A", "metrics": {"quality": {"value": 1, "evidence": "test"}}}]}
+    assert load_scorer().score(data)["options"][0]["score"] == 100
+
+
 @pytest.mark.parametrize("host,folder", [("codex", ".agents"), ("grok", ".grok"), ("claude", ".claude")])
 def test_installed_skill_runs_real_repo_gate(tmp_path, host, folder):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
@@ -83,12 +89,38 @@ def test_installed_skill_runs_real_repo_gate(tmp_path, host, folder):
                           cwd=tmp_path, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "kit verify: OK" in proc.stdout
+    assert list((skill / "scripts/__pycache__").glob("*.pyc"))
+    assert install_portable.install(tmp_path, host) == "unchanged"
     config = json.loads((tmp_path / ".kit/kit.json").read_text())
     config["verification"]["gates"][0]["argv"] = [sys.executable, "-c", "raise SystemExit(3)"]
     (tmp_path / ".kit/kit.json").write_text(json.dumps(config))
     proc = subprocess.run([sys.executable, str(skill / "scripts/stop_verify.py"), "--manual", "web/index.html"],
                           cwd=tmp_path, capture_output=True, text=True)
     assert proc.returncode == 1 and "Gate web failed" in proc.stdout
+
+
+@pytest.mark.parametrize("host,folder", [("codex", ".agents"), ("grok", ".grok"), ("claude", ".claude")])
+def test_update_after_verify_preserves_unexpected_files(tmp_path, monkeypatch, host, folder):
+    source = tmp_path / "source"
+    shutil.copytree(install_portable.SOURCE, source)
+    monkeypatch.setattr(install_portable, "SOURCE", source)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    install_portable.install(repo, host)
+    target = repo / folder / "skills/kit-deliver"
+    subprocess.run([sys.executable, str(target / "scripts/stop_verify.py"), "--manual", "x.py"],
+                   cwd=repo, capture_output=True, check=False)
+    (source / "SKILL.md").write_text("new version")
+    assert install_portable.install(repo, host) == "installed"
+    assert (target / "SKILL.md").read_text() == "new version"
+    cache = target / "scripts/__pycache__"
+    cache.mkdir(exist_ok=True)
+    user_file = cache / "notes.txt"
+    user_file.write_text("keep")
+    with pytest.raises(ValueError, match="unmanaged file"):
+        install_portable.install(repo, host)
+    assert user_file.read_text() == "keep"
 
 
 def test_installer_preserves_user_changes_and_updates_untouched_version(tmp_path, monkeypatch):

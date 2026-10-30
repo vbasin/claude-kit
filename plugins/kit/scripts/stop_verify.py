@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -94,8 +95,8 @@ def _refers_to(names: Set[str], module: str) -> bool:
     return any(n == module or n.startswith(prefix) for n in names)
 
 
-def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> Tuple[List[str], int]:
-    """Explicit test paths for the changed files, and how many more were found but capped.
+def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> Tuple[List[str], int, int]:
+    """Explicit test paths and counts omitted by the cap and exclusions.
 
     Changed files may have been deleted: their tests are exactly the ones that should fail.
     """
@@ -149,27 +150,31 @@ def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> 
 
     excluded = tests_cfg.get("exclude", []) or []
     selected: List[str] = []
+    omitted: Set[str] = set()
     for rel in direct + by_name + by_import + by_conftest:
         if rel in selected or not (root / rel).is_file():
             continue
         if any(fnmatch.fnmatch(rel, pat) for pat in excluded):
+            omitted.add(rel)
             continue
         selected.append(rel)
     cap = int(tests_cfg.get("max_files", 8))
-    return selected[:cap], max(0, len(selected) - cap)
+    return selected[:cap], max(0, len(selected) - cap), len(omitted)
 
 
-def lint_files(root: Path, python: str, cfg: Dict[str, Any], files: List[str]) -> Optional[str]:
+def lint_files(root: Path, python: str, cfg: Dict[str, Any], files: List[str],
+               deadline: Optional[float] = None) -> Optional[str]:
     lint = cfg.get("lint", {})
     if not lint.get("enabled") or not files:
         return None
     try:
-        return run_lint(root, python, lint.get("args", []), files)
+        return run_lint(root, python, lint.get("args", []), files, deadline=deadline)
     except (OSError, subprocess.SubprocessError) as exc:
         return f"lint could not run: {exc}"
 
 
-def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str]) -> Optional[str]:
+def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str],
+              deadline: Optional[float] = None) -> Optional[str]:
     tcfg = cfg.get("tests", {})
     if not tcfg.get("enabled"):
         return None
@@ -181,8 +186,13 @@ def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str]) ->
     cache = tempfile.mkdtemp(prefix="kit-pycache-")
     env = {"PYTHONPYCACHEPREFIX": cache, "PYTHONDONTWRITEBYTECODE": "1", **(tcfg.get("env") or {})}
     try:
+        timeout = int(tcfg.get("timeout_s", 300))
+        if deadline is not None:
+            timeout = min(timeout, deadline - time.monotonic())
+            if timeout <= 0:
+                return "pytest incomplete: hook time budget exhausted"
         proc = run(
-            cmd, root, timeout=int(tcfg.get("timeout_s", 300)),
+            cmd, root, timeout=timeout,
             env_file=tcfg.get("env_file"), extra_env=env,
         )
     except subprocess.TimeoutExpired:
@@ -201,17 +211,21 @@ def run_tests(root: Path, python: str, cfg: Dict[str, Any], tests: List[str]) ->
     return tail(proc.stdout + proc.stderr, max_lines=60)
 
 
-def verify(root: Path, cfg: Dict[str, Any], changed: List[str]) -> Tuple[List[str], List[str], int]:
+def verify(root: Path, cfg: Dict[str, Any], changed: List[str],
+           deadline: Optional[float] = None) -> Tuple[List[str], List[str], int]:
     """Return (failure sections, tests run, tests capped)."""
-    gate_failures, _ = run_gates(root, cfg, changed)
-    python = resolve_python(cfg, root)
     changed_py = [f for f in changed if f.endswith(".py")]
+    reserve = 120 if changed_py and cfg.get("lint", {}).get("enabled") else 0
+    gate_deadline = deadline - reserve if deadline is not None else None
+    gate_failures, _ = run_gates(root, cfg, changed, deadline=gate_deadline)
+    python = resolve_python(cfg, root)
     if not changed_py:
         if changed and not cfg.get("verification", {}).get("enabled"):
             return ["No configured verification gates cover these non-Python files."], [], 0
         return gate_failures, [], 0
     if python is None:
-        if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")):
+        needs_tests = cfg.get("tests", {}).get("enabled") and not cfg.get("verification", {}).get("enabled")
+        if not (cfg.get("lint", {}).get("enabled") or needs_tests):
             return gate_failures, [], 0
         return gate_failures + [f"No interpreter from `python` in .claude/kit.json exists here "
                 f"({cfg.get('python') or ['python3']}), "
@@ -222,31 +236,35 @@ def verify(root: Path, cfg: Dict[str, Any], changed: List[str]) -> Tuple[List[st
         non_python = [f for f in changed if not f.endswith(".py")]
         if non_python:
             failures.append("No configured verification gates cover: " + ", ".join(non_python))
-    lint_out = lint_files(root, python, cfg, [f for f in changed_py if (root / f).is_file()])
+    lint_out = lint_files(root, python, cfg, [f for f in changed_py if (root / f).is_file()], deadline=deadline)
     if lint_out:
         failures.append(f"Lint ({' '.join(cfg['lint'].get('args', []))}):\n{lint_out}")
     tests: List[str] = []
     capped = 0
+    excluded_count = 0
     if cfg.get("tests", {}).get("enabled") and not cfg.get("verification", {}).get("enabled"):
         tcfg = cfg.get("tests", {})
-        tests, capped = find_tests(root, changed_py, tcfg)
+        tests, capped, excluded_count = find_tests(root, changed_py, tcfg)
         # Source changes can affect tests through indirect imports. Run all discovered
         # test files for correctness; explicit exclusions remain visible as incomplete.
         if any(not _is_test_file(f, tcfg.get("test_dirs", ["tests"])) for f in changed_py):
-            all_tests = sorted(p.relative_to(root).as_posix()
+            all_tests = sorted({p.relative_to(root).as_posix()
                                for d in tcfg.get("test_dirs", ["tests"])
                                if (root / d).is_dir() for p in (root / d).rglob("*.py")
-                               if p.name.startswith("test_") or p.name.endswith("_test.py"))
+                               if p.name.startswith("test_") or p.name.endswith("_test.py")})
             excluded = tcfg.get("exclude", []) or []
             tests = [f for f in all_tests if not any(fnmatch.fnmatch(f, pat) for pat in excluded)]
-            capped = len(all_tests) - len(tests)
+            excluded_count = len(all_tests) - len(tests)
+            capped = 0
     if capped:
-        failures.append(f"Verification incomplete: {capped} test files were omitted by exclusions or tests.max_files.")
-    test_out = (run_tests(root, python, cfg, tests)
+        failures.append(f"Verification incomplete: {capped} test files were omitted by tests.max_files.")
+    if excluded_count:
+        failures.append(f"Verification incomplete: {excluded_count} test files were omitted by exclusions.")
+    test_out = (run_tests(root, python, cfg, tests, deadline=deadline)
                 if not cfg.get("verification", {}).get("enabled") else None)
     if test_out:
         failures.append(f"Tests (pytest {' '.join(tests)}):\n{test_out}")
-    return failures, tests, capped
+    return failures, tests, capped + excluded_count
 
 
 def _digest(root: Path, files: List[str]) -> str:
@@ -258,6 +276,8 @@ def _digest(root: Path, files: List[str]) -> str:
 
 
 def hook_main() -> int:
+    # The configured hook limit is 480 seconds; leave time for setup and reporting.
+    deadline = time.monotonic() + 450
     data = read_input()
     session_id = str(data.get("session_id") or "")
     root = repo_root(data.get("cwd"))
@@ -266,8 +286,11 @@ def hook_main() -> int:
     try:
         cfg = load_config(root, strict=True)
     except ValueError as exc:
-        emit({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext":
-              f"Verification unavailable: {exc}. Correct the configuration or report the task unverified."}})
+        message = f"Verification unavailable: {exc}. Correct the configuration or report the task unverified."
+        if data.get("stop_hook_active"):
+            emit({"systemMessage": message})
+        else:
+            emit({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": message}})
         return 0
     if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")
             or cfg.get("verification", {}).get("enabled")):
@@ -278,7 +301,7 @@ def hook_main() -> int:
         return 0
     digest = _digest(root, changed)
 
-    failures, tests, capped = verify(root, cfg, changed)
+    failures, tests, capped = verify(root, cfg, changed, deadline=deadline)
     if not failures:
         state["passed_digest"] = digest
         state.pop("failed_digest", None)
@@ -321,7 +344,7 @@ def manual_main(files: List[str]) -> int:
     py = [f for f in changed if f.endswith(".py")]
     print(f"kit verify: {len(py)} changed Python file(s); tests run: {' '.join(tests) or 'none'}")
     if capped:
-        print(f"  ({capped} more related test files not run; cap is tests.max_files)")
+        print(f"  ({capped} related test files not run; see omissions above)")
     if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")
             or cfg.get("verification", {}).get("enabled")):
         print("  no checks are enabled: add .claude/kit.json to this repo to enable them")
