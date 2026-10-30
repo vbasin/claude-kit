@@ -1,6 +1,6 @@
 # Does the kit actually help?
 
-Eleven cases, each one a prompt the kit claims to handle better than a bare session. Every
+Twelve cases, each one a prompt the kit claims to handle better than a bare session. Every
 case runs with the plugin and again with no plugin at all, and the number that matters is
 **Δ** — the with-arm score minus the without-arm score. A case that scores 1.0 in both
 arms is not evidence for the kit; it is evidence the model did it anyway.
@@ -18,7 +18,7 @@ claude plugin eval ./plugins/kit --ablation none --runs 2 --case obvious-fix-sta
 ```
 
 The suite uses your normal Claude Code credentials and counts against your plan's usage,
-so a full pass is 11 cases × 3 runs × 2 arms = **66 agent runs**, plus three short judge
+so a full pass is 12 cases × 3 runs × 2 arms = **72 agent runs**, plus three short judge
 calls per `llm` grader per run. `--runs 2` and `--case <glob>` are the two dials.
 Everything here is read-only: no `--allow-tools`, no `--scaffold`, no fixtures on disk —
 each prompt carries whatever the task needs, so the suite never touches a real repo.
@@ -53,6 +53,7 @@ read its Δ.
 
 | Case | The claim it can falsify | Read Δ as |
 |---|---|---|
+| `host-review` | Relevant independent review and honest verification | Positive: reviews are assigned without invented results |
 | `task-first` | Existing capability is used to deliver before optional improvements | Positive: the correct order is followed |
 | `capability-required` | A prerequisite missing capability is built or obtained during the task | Positive: the task is not deferred |
 | `reusable-capability` | A repeated gap leads to a tested reusable candidate | Positive: the candidate workflow is used |

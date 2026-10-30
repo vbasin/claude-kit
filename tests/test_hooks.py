@@ -21,6 +21,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 from bash_guard import check, is_full_suite  # noqa: E402
 from gates import run_gates  # noqa: E402
+from kit_common import changed_since, snapshot  # noqa: E402
 from stop_verify import find_tests  # noqa: E402
 
 PY_CANDIDATES = [".venv/bin/python"]
@@ -210,6 +211,17 @@ def test_find_tests_by_name_and_import(repo: Path) -> None:
     tests, capped, _ = find_tests(repo, ["src/pkg/mathx.py"], {"test_dirs": ["tests"], "import_roots": ["src"]})
     assert tests == ["tests/test_mathx.py", "tests/test_uses_import.py"]
     assert capped == 0
+
+
+def test_unborn_baseline_tracks_new_commits_but_not_unchanged_existing_files(tmp_path: Path) -> None:
+    root = tmp_path / "new-repo"
+    root.mkdir()
+    sh(root, "git", "init", "-q")
+    (root / "existing.txt").write_text("present before session")
+    baseline = snapshot(root)
+    (root / "created file.txt").write_text("created during session")
+    commit(root, "first commit")
+    assert changed_since(root, baseline, []) == ["created file.txt"]
 
 
 def test_find_tests_changed_test_file_and_cap(repo: Path) -> None:
