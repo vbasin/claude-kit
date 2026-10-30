@@ -80,6 +80,36 @@ def _merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def validate_verification_config(cfg: Dict[str, Any]) -> None:
+    """Validate settings consumed by the manual verifier and Stop hook."""
+    def strings(value: Any) -> bool:
+        return isinstance(value, list) and all(isinstance(v, str) for v in value)
+
+    python = cfg.get("python")
+    if not (isinstance(python, str) or strings(python)):
+        raise ValueError("Invalid kit configuration: python must be a string or list of strings")
+    for section in ("lint", "tests"):
+        if not isinstance(cfg[section].get("enabled"), bool):
+            raise ValueError(f"Invalid kit configuration: {section}.enabled must be a boolean")
+    for section, keys in (("lint", ("args",)),
+                          ("tests", ("test_dirs", "import_roots", "exclude", "pytest_args"))):
+        for key in keys:
+            if key in cfg[section] and not strings(cfg[section][key]):
+                raise ValueError(f"Invalid kit configuration: {section}.{key} must be a list of strings")
+    for key in ("max_files", "timeout_s"):
+        value = cfg["tests"].get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"Invalid kit configuration: tests.{key} must be a positive integer")
+    env = cfg["tests"].get("env")
+    if env is not None and (not isinstance(env, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in env.items()
+    )):
+        raise ValueError("Invalid kit configuration: tests.env must be an object of strings")
+    env_file = cfg["tests"].get("env_file")
+    if env_file is not None and not isinstance(env_file, str):
+        raise ValueError("Invalid kit configuration: tests.env_file must be a string or null")
+
+
 def load_config(root: Optional[Path], strict: bool = False) -> Dict[str, Any]:
     if root is None:
         return DEFAULT_CONFIG
@@ -96,7 +126,10 @@ def load_config(root: Optional[Path], strict: bool = False) -> Dict[str, Any]:
         k in user and not isinstance(user[k], dict) for k in ("lint", "tests", "guards", "routing")
     )):
         raise ValueError("Invalid kit configuration: expected objects for lint, tests, guards and routing")
-    return _merge(DEFAULT_CONFIG, user if isinstance(user, dict) else {})
+    cfg = _merge(DEFAULT_CONFIG, user if isinstance(user, dict) else {})
+    if strict:
+        validate_verification_config(cfg)
+    return cfg
 
 
 def resolve_python(config: Dict[str, Any], root: Path) -> Optional[str]:

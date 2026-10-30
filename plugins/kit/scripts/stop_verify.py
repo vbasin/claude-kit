@@ -93,8 +93,8 @@ def _refers_to(names: Set[str], module: str) -> bool:
     return any(n == module or n.startswith(prefix) for n in names)
 
 
-def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> Tuple[List[str], int]:
-    """Explicit test paths for the changed files, and how many more were found but capped.
+def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> Tuple[List[str], int, int]:
+    """Explicit test paths and counts omitted by the cap and exclusions.
 
     Changed files may have been deleted: their tests are exactly the ones that should fail.
     """
@@ -148,14 +148,16 @@ def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> 
 
     excluded = tests_cfg.get("exclude", []) or []
     selected: List[str] = []
+    omitted: Set[str] = set()
     for rel in direct + by_name + by_import + by_conftest:
         if rel in selected or not (root / rel).is_file():
             continue
         if any(fnmatch.fnmatch(rel, pat) for pat in excluded):
+            omitted.add(rel)
             continue
         selected.append(rel)
     cap = int(tests_cfg.get("max_files", 8))
-    return selected[:cap], max(0, len(selected) - cap)
+    return selected[:cap], max(0, len(selected) - cap), len(omitted)
 
 
 def lint_files(root: Path, python: str, cfg: Dict[str, Any], files: List[str]) -> Optional[str]:
@@ -218,25 +220,29 @@ def verify(root: Path, cfg: Dict[str, Any], changed: List[str]) -> Tuple[List[st
         failures.append(f"Lint ({' '.join(cfg['lint'].get('args', []))}):\n{lint_out}")
     tests: List[str] = []
     capped = 0
+    excluded_count = 0
     if cfg.get("tests", {}).get("enabled"):
         tcfg = cfg.get("tests", {})
-        tests, capped = find_tests(root, changed_py, tcfg)
+        tests, capped, excluded_count = find_tests(root, changed_py, tcfg)
         # Source changes can affect tests through indirect imports. Run all discovered
         # test files for correctness; explicit exclusions remain visible as incomplete.
         if any(not _is_test_file(f, tcfg.get("test_dirs", ["tests"])) for f in changed_py):
-            all_tests = sorted(p.relative_to(root).as_posix()
+            all_tests = sorted({p.relative_to(root).as_posix()
                                for d in tcfg.get("test_dirs", ["tests"])
                                if (root / d).is_dir() for p in (root / d).rglob("*.py")
-                               if p.name.startswith("test_") or p.name.endswith("_test.py"))
+                               if p.name.startswith("test_") or p.name.endswith("_test.py")})
             excluded = tcfg.get("exclude", []) or []
             tests = [f for f in all_tests if not any(fnmatch.fnmatch(f, pat) for pat in excluded)]
-            capped = len(all_tests) - len(tests)
+            excluded_count = len(all_tests) - len(tests)
+            capped = 0
     if capped:
-        failures.append(f"Verification incomplete: {capped} test files were omitted by exclusions or tests.max_files.")
+        failures.append(f"Verification incomplete: {capped} test files were omitted by tests.max_files.")
+    if excluded_count:
+        failures.append(f"Verification incomplete: {excluded_count} test files were omitted by exclusions.")
     test_out = run_tests(root, python, cfg, tests)
     if test_out:
         failures.append(f"Tests (pytest {' '.join(tests)}):\n{test_out}")
-    return failures, tests, capped
+    return failures, tests, capped + excluded_count
 
 
 def _digest(root: Path, files: List[str]) -> str:
@@ -256,8 +262,11 @@ def hook_main() -> int:
     try:
         cfg = load_config(root, strict=True)
     except ValueError as exc:
-        emit({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext":
-              f"Verification unavailable: {exc}. Correct the configuration or report the task unverified."}})
+        message = f"Verification unavailable: {exc}. Correct the configuration or report the task unverified."
+        if data.get("stop_hook_active"):
+            emit({"systemMessage": message})
+        else:
+            emit({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": message}})
         return 0
     if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")):
         return 0
@@ -311,7 +320,7 @@ def manual_main(files: List[str]) -> int:
     py = [f for f in changed if f.endswith(".py")]
     print(f"kit verify: {len(py)} changed Python file(s); tests run: {' '.join(tests) or 'none'}")
     if capped:
-        print(f"  ({capped} more related test files not run; cap is tests.max_files)")
+        print(f"  ({capped} related test files not run; see omissions above)")
     if not (cfg.get("lint", {}).get("enabled") or cfg.get("tests", {}).get("enabled")):
         print("  lint and tests are disabled: add .claude/kit.json to this repo to enable them")
     if failures:
