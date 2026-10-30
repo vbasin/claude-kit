@@ -246,3 +246,10 @@ portable review briefs. Grok Stop hooks are passive, so the agent must explicitl
 before reporting. A guard configured as `ask` is not an enforceable approval prompt in
 these adapters; use the host's own permission controls. See the installed skill's
 `references/hosts.md` for availability, permissions, cloud-surface and validation limits.
+
+### Recorded host validation
+
+See [host validation](docs/HOST_VALIDATION.md) for the tested CLI versions, actual
+Codex hook/reviewer evidence, Grok authentication blocker, and a small reproducible
+smoke procedure. Native configuration must be loaded and trusted; installing files
+alone is not evidence that hooks or named agents ran.

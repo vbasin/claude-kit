@@ -286,6 +286,40 @@ def test_gate_deadline_reports_unstarted_checks(repo: Path) -> None:
     assert any("Gate later incomplete" in f for f in failures)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group cleanup")
+@pytest.mark.parametrize("wrapper_exits", [False, True])
+def test_timed_out_gate_stops_descendants(repo: Path, wrapper_exits: bool) -> None:
+    import time
+    # Both a live wrapper and an exited wrapper with children holding its pipes
+    # must have their workers stopped before the next verification check.
+    worker = ("import pathlib,time; pathlib.Path('worker-started').write_text('ready'); "
+              "time.sleep(1.5); pathlib.Path('late-worker-write').write_text('leaked')")
+    wrapper = (f"import subprocess,sys,time; subprocess.Popen([sys.executable, '-c', {worker!r}]); "
+               + ("pass" if wrapper_exits else "time.sleep(30)"))
+    gates = [{"name": "worker", "paths": ["*.py"], "argv": [sys.executable, "-c", wrapper],
+              "timeout_s": 1}]
+    failures, ran = run_gates(repo, {"verification": {"enabled": True, "gates": gates}}, ["x.py"])
+    assert (repo / "worker-started").exists()
+    assert any("Gate worker unavailable" in f and "timed out" in f for f in failures)
+    assert ran == []
+    time.sleep(0.8)
+    assert not (repo / "late-worker-write").exists()
+
+
+@pytest.mark.parametrize("enabled", ["false", "true", 0, 1, None, [], {}])
+def test_invalid_verification_enabled_never_reports_success(repo: Path, data_dir: Path, enabled) -> None:
+    set_config(repo, lint={"enabled": False}, verification={"enabled": enabled, "gates": [
+        {"name": "passing", "paths": ["*.py"], "argv": [sys.executable, "-c", "pass"]},
+    ]})
+    result = manual(repo, "src/pkg/mathx.py", data_dir=data_dir)
+    assert result.returncode == 2
+    assert "verification.enabled must be a boolean" in result.stdout
+    assert "kit verify: OK" not in result.stdout
+    base = {"session_id": "invalid-verification", "cwd": str(repo)}
+    first = hook("stop_verify.py", base, data_dir)
+    assert "verification.enabled must be a boolean" in first["hookSpecificOutput"]["additionalContext"]
+
+
 def test_gate_mode_does_not_require_project_python(repo: Path, data_dir: Path) -> None:
     set_config(repo, python=["nonexistent-python-kit"], lint={"enabled": False},
                verification={"enabled": True, "gates": [{"name": "external", "paths": ["*.py"],

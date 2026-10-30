@@ -1,6 +1,7 @@
 """Host adapter contract and install tests without live model calls."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -130,3 +131,30 @@ def test_shared_workflow_preserves_existing_instructions(tmp_path):
     with pytest.raises(ValueError, match="reconcile"):
         install_native.install(tmp_path, "grok")
     assert "Changed instruction" in instructions.read_text()
+
+
+@pytest.mark.parametrize("host,folder", [("codex", ".agents"), ("grok", ".grok")])
+def test_native_install_reports_portable_updates_and_additions(tmp_path, monkeypatch, host, folder):
+    portable = install_native.install_portable
+    source = tmp_path / "source"
+    shutil.copytree(portable.SOURCE, source)
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    monkeypatch.setattr(portable, "SOURCE", source)
+    monkeypatch.setattr(portable, "SKILLS", skills)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert install_native.install(repo, host) == "installed"
+    assert install_native.install(repo, host) == "unchanged"
+    revised = (source / "SKILL.md").read_text() + "\nUpdated workflow.\n"
+    (source / "SKILL.md").write_text(revised)
+    assert install_native.install(repo, host) == "installed"
+    assert (repo / folder / "skills/kit-deliver/SKILL.md").read_text() == revised
+    assert install_native.install(repo, host) == "unchanged"
+    added = skills / "new-skill"
+    added.mkdir()
+    (added / ".kit-portable").write_text("")
+    (added / "SKILL.md").write_text("---\nname: new-skill\ndescription: New capability\n---\n")
+    assert install_native.install(repo, host) == "installed"
+    assert (repo / folder / "skills/new-skill/SKILL.md").is_file()
+    assert install_native.install(repo, host) == "unchanged"

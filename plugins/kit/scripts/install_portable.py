@@ -17,6 +17,8 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from learning import validate_skill_name
+
 PLUGIN = Path(__file__).resolve().parents[1]
 SOURCE = PLUGIN / "portable" / "kit-deliver"
 SKILLS = PLUGIN / "skills"
@@ -75,19 +77,7 @@ def sources() -> List[Tuple[str, Path, bool]]:
             continue
         if skill.is_symlink() or not skill.is_dir() or not NAME.fullmatch(skill.name):
             raise ValueError(f"invalid portable skill directory: {skill}")
-        text = (skill / "SKILL.md").read_text(encoding="utf-8")
-        frontmatter = text.split("---\n", 2)
-        names = []
-        if len(frontmatter) >= 3 and frontmatter[0] == "":
-            for line in frontmatter[1].splitlines():
-                key, sep, value = line.partition(":")
-                if sep and key.strip() == "name":
-                    value = value.split("#", 1)[0].strip()
-                    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
-                        value = value[1:-1]
-                    names.append(value)
-        if names != [skill.name]:
-            raise ValueError(f"portable skill name must match its directory: {skill}")
+        validate_skill_name(skill, skill.name)
         if skill.name == "kit-deliver":
             raise ValueError("portable skill conflicts with kit-deliver")
         found.append((skill.name, skill, False))

@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[1] / "plugins/kit/scripts/learning.py"
 
 
@@ -103,3 +105,20 @@ def test_checks_can_emit_non_utf8_output(tmp_path):
     (suite.parent / "regression/check.py").write_text("import os\nos.write(1, b'\\xff')\n")
     result = run("evaluate", candidate, "--suite", suite)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("frontmatter", [
+    "No frontmatter\n",
+    "---\ndescription: Missing name\n---\n",
+    "---\nname: other-skill\n---\n",
+    "---\nname: test-skill\nname: test-skill\n---\n",
+])
+@pytest.mark.parametrize("action", ["evaluate", "promote"])
+def test_invalid_skill_name_is_rejected_before_evaluation(tmp_path, frontmatter, action):
+    candidate, suite = setup_candidate(tmp_path)
+    (candidate / "skill/SKILL.md").write_text(frontmatter)
+    (candidate / "skill/.kit-portable").write_text("")
+    target = tmp_path / "skills"
+    result = run(action, candidate, "--suite", suite, "--destination", target)
+    assert result.returncode == 2 and "skill name must match" in result.stderr
+    assert not target.exists()

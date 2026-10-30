@@ -51,7 +51,7 @@ def run_gates(root: Path, config: Dict[str, Any], changed: List[str],
                     failures.append(f"Gate {name} incomplete: hook time budget exhausted")
                     continue
                 timeout = min(timeout, remaining)
-            result = run(argv, cwd, timeout)
+            result = run(argv, cwd, timeout, kill_tree=True)
             ran.append(name)
             if result.returncode:
                 output = tail(result.stdout + result.stderr)

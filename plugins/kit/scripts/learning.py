@@ -20,6 +20,23 @@ from typing import Any, Dict, List
 NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
+def validate_skill_name(skill: Path, expected: str) -> None:
+    """Require one frontmatter name matching the candidate/install directory."""
+    text = (skill / "SKILL.md").read_text(encoding="utf-8")
+    frontmatter = text.split("---\n", 2)
+    names = []
+    if len(frontmatter) >= 3 and frontmatter[0] == "":
+        for line in frontmatter[1].splitlines():
+            key, sep, value = line.partition(":")
+            if sep and key.strip() == "name":
+                value = value.split("#", 1)[0].strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                    value = value[1:-1]
+                names.append(value)
+    if names != [expected]:
+        raise ValueError(f"skill name must match {expected!r}: {skill}")
+
+
 def validate_candidate(candidate: Path) -> Dict[str, Any]:
     candidate = candidate.resolve()
     meta = json.loads((candidate / "candidate.json").read_text(encoding="utf-8"))
@@ -33,6 +50,7 @@ def validate_candidate(candidate: Path) -> Dict[str, Any]:
         raise ValueError("candidate requires skill/SKILL.md")
     if any(p.is_symlink() for p in candidate.rglob("*")):
         raise ValueError("candidate must not contain symlinks")
+    validate_skill_name(skill, meta["name"])
     return meta
 
 
