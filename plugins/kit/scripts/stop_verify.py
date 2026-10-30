@@ -196,37 +196,61 @@ def _all_tests(root: Path, test_dirs: List[str]) -> List[str]:
     return sorted(found)
 
 
-def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> Tuple[List[str], List[str], int]:
-    """Explicit test paths, the related ones the cap left out, and how many were excluded.
+def _under(conftest: str, tests: List[str]) -> List[str]:
+    scope = Path(conftest).parent.as_posix()
+    return [t for t in tests if scope == "." or t.startswith(scope + "/")]
+
+
+def select_tests(root: Path, changed_py: List[str],
+                 tests_cfg: Dict[str, Any]) -> Tuple[List[str], List[str], int, List[str]]:
+    """Explicit test paths, the related ones the cap left out, how many were excluded, and
+    the changed source files that no test reaches at all.
 
     Changed files may have been deleted: their tests are exactly the ones that should fail.
     """
     test_dirs = [d.strip("/") for d in tests_cfg.get("test_dirs", ["tests"])]
     strip_roots = set(tests_cfg.get("import_roots", ["src"]))
     all_tests = _all_tests(root, test_dirs)
+    untested: List[str] = []
     if tests_cfg.get("scope") == "all":
         ordered = all_tests
     else:
         direct = [rel for rel in changed_py if _is_test_file(rel, test_dirs)]
-        by_name: List[str] = []
         by_conftest: List[str] = []
         sources: List[str] = []
         for rel in changed_py:
             if rel in direct:
                 continue
             if Path(rel).name == "conftest.py":
-                scope = Path(rel).parent.as_posix()
-                by_conftest.extend(t for t in all_tests if scope == "." or t.startswith(scope + "/"))
-                continue
-            sources.append(rel)
-            names = _module_names(rel, strip_roots)
-            stem = names[0].rsplit(".", 1)[-1] if names else ""
-            by_name.extend(t for t in all_tests
-                           if stem and (Path(t).stem == f"test_{stem}" or Path(t).stem.startswith(f"test_{stem}_")))
-        reached = _dependents(_importers(root, sources, strip_roots), sources) if sources else {}
+                by_conftest.extend(_under(rel, all_tests))
+            else:
+                sources.append(rel)
         tests = set(all_tests)
-        by_import = sorted((rel for rel in reached if rel in tests), key=lambda rel: (reached[rel], rel))
-        ordered = direct + by_name + by_import + by_conftest
+        reverse = _importers(root, sources, strip_roots) if sources else {}
+
+        def related(src: str) -> Dict[str, int]:
+            """Tests this one source reaches: by name, through imports, and through a
+            conftest that imports it, whose fixtures its tests use without importing."""
+            names = _module_names(src, strip_roots)
+            stem = names[0].rsplit(".", 1)[-1] if names else ""
+            found = {t: 0 for t in all_tests
+                     if stem and (Path(t).stem == f"test_{stem}" or Path(t).stem.startswith(f"test_{stem}_"))}
+            for rel, dist in _dependents(reverse, [src]).items():
+                if rel in tests:
+                    found.setdefault(rel, dist)
+                elif Path(rel).name == "conftest.py":
+                    for t in _under(rel, all_tests):
+                        found.setdefault(t, dist + 1)
+            return found
+
+        reached: Dict[str, int] = {}
+        for src in sources:
+            found = related(src)
+            if not found:
+                untested.append(src)
+            for rel, dist in found.items():
+                reached[rel] = min(dist, reached.get(rel, dist))
+        ordered = direct + sorted(reached, key=lambda rel: (reached[rel], rel)) + by_conftest
 
     excluded = tests_cfg.get("exclude", []) or []
     selected: List[str] = []
@@ -239,7 +263,12 @@ def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> 
             continue
         selected.append(rel)
     cap = len(selected) if tests_cfg.get("scope") == "all" else int(tests_cfg.get("max_files", 8))
-    return selected[:cap], selected[cap:], len(omitted)
+    return selected[:cap], selected[cap:], len(omitted), untested
+
+
+def find_tests(root: Path, changed_py: List[str], tests_cfg: Dict[str, Any]) -> Tuple[List[str], List[str], int]:
+    tests, capped, excluded, _ = select_tests(root, changed_py, tests_cfg)
+    return tests, capped, excluded
 
 
 def lint_files(root: Path, python: str, cfg: Dict[str, Any], files: List[str],
@@ -329,7 +358,9 @@ def verify(root: Path, cfg: Dict[str, Any], changed: List[str],
         failures.append(f"Lint ({' '.join(cfg['lint'].get('args', []))}):\n{lint_out}")
     if gated or not tcfg.get("enabled"):
         return failures, [], gaps
-    tests, capped, excluded_count = find_tests(root, changed_py, tcfg)
+    tests, capped, excluded_count, untested = select_tests(root, changed_py, tcfg)
+    if untested:
+        gaps.append(INCOMPLETE + "no test reaches " + ", ".join(untested))
     if capped:
         shown = " ".join(capped[:10]) + (f" and {len(capped) - 10} more" if len(capped) > 10 else "")
         gaps.append(INCOMPLETE + f"{len(capped)} related test files, further from the change "
@@ -337,7 +368,8 @@ def verify(root: Path, cfg: Dict[str, Any], changed: List[str],
     if excluded_count:
         gaps.append(INCOMPLETE + f"{excluded_count} test files were omitted by exclusions.")
     if not tests:
-        gaps.append(INCOMPLETE + "no related tests were selected.")
+        if not untested:
+            gaps.append(INCOMPLETE + "no related tests were selected.")
         return failures, [], gaps
     test_out = run_tests(root, python, cfg, tests, deadline=deadline)
     if test_out and test_out.startswith(INCOMPLETE):
@@ -392,7 +424,8 @@ def hook_main() -> int:
         if gaps:
             state["gaps_digest"] = digest
             save_state(session_id, state)
-            emit({"systemMessage": "kit verify: lint and tests passed, with gaps.\n" + "\n".join(gaps)})
+            emit({"systemMessage": "kit verify: nothing failed, but verification is INCOMPLETE. "
+                  "Do not report this change as verified.\n" + "\n".join(gaps)})
             return 0
         state["passed_digest"] = digest
         save_state(session_id, state)

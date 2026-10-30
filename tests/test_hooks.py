@@ -835,3 +835,29 @@ def test_a_gap_is_reported_once_and_does_not_block(repo: Path, data_dir: Path) -
     assert "hookSpecificOutput" not in first, "a docs edit Claude cannot fix blocked the stop"
     assert "README.md" in first["systemMessage"]
     assert hook("stop_verify.py", base, data_dir) == {}, "the same gap was reported every turn"
+
+
+def test_tests_using_a_conftest_fixture_run_when_its_import_changes(repo: Path) -> None:
+    (repo / "tests/conftest.py").write_text(
+        "import pytest\nfrom pkg.other import other\n\n@pytest.fixture\ndef one():\n    return other()\n"
+    )
+    (repo / "tests/test_fixture_only.py").write_text("def test_one(one):\n    assert one == 1\n")
+    cfg = {"test_dirs": ["tests"], "import_roots": ["src"], "max_files": 50}
+    tests, _, _ = find_tests(repo, ["src/pkg/other.py"], cfg)
+    assert "tests/test_fixture_only.py" in tests
+
+
+def test_an_untested_module_is_a_gap_even_beside_a_tested_one(repo: Path, data_dir: Path) -> None:
+    (repo / "src/pkg/lonely.py").write_text("def lonely():\n    return 0\n")
+    set_config(repo, lint={"enabled": False})
+    result = manual(repo, "src/pkg/mathx.py", "src/pkg/lonely.py", data_dir=data_dir)
+    assert result.returncode == 1 and "no test reaches src/pkg/lonely.py" in result.stdout
+    assert "INCOMPLETE" in result.stdout
+
+
+def test_a_gap_notice_never_says_the_checks_passed(repo: Path, data_dir: Path) -> None:
+    base = {"session_id": "gap-wording", "cwd": str(repo)}
+    hook("session_start.py", base, data_dir)
+    (repo / "README.md").write_text("docs\n")
+    message = hook("stop_verify.py", base, data_dir)["systemMessage"]
+    assert "INCOMPLETE" in message and "passed" not in message

@@ -63,7 +63,7 @@ def stop(data: Dict[str, Any]) -> Dict[str, Any]:
     failures, _, gaps = verify(root, cfg, changed, deadline=time.monotonic() + 440)
     if not failures:
         return {"systemMessage": "kit verification incomplete:\n" + "\n".join(gaps)} if gaps else {}
-    reason = "kit verification failed or is incomplete:\n" + "\n\n".join(failures)
+    reason = "kit verification failed or is incomplete:\n" + "\n\n".join(failures + gaps)
     reason += "\nFix applicable failures or report remaining gaps; do not claim verification passed."
     if data.get("stop_hook_active"):
         return {"systemMessage": reason}
